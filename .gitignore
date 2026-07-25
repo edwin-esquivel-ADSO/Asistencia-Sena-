@@ -1,0 +1,13 @@
+# SENA Attendance System - .gitignore
+.env
+.env.local
+env.txt
+node_modules/
+.next/
+.pnpm-store/
+public/uploads/*
+!public/uploads/.gitkeep
+test_connection.php
+verify_db.php
+*.log
+
