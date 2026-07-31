@@ -20,7 +20,7 @@ export function formatDateBogota(dateInput: string | Date | null | undefined): s
 }
 
 /**
- * Formats time as HH:MM:SS (24-hour) in America/Bogota timezone
+ * Formats time in the 12-hour Colombian convention (for example, 1:01 p. m.).
  */
 export function formatTimeBogota(timeInput: string | Date | null | undefined): string {
   if (!timeInput) return '';
@@ -29,10 +29,11 @@ export function formatTimeBogota(timeInput: string | Date | null | undefined): s
   if (typeof timeInput === 'string' && /^\d{1,2}:\d{2}/.test(timeInput.trim())) {
     const cleanTime = timeInput.trim().split('.')[0]; // remove milliseconds if any
     const parts = cleanTime.split(':');
-    const hh = parts[0].padStart(2, '0');
+    const rawHour = Number(parts[0]);
     const mm = parts[1].padStart(2, '0');
-    const ss = (parts[2] || '00').padStart(2, '0');
-    return `${hh}:${mm}:${ss}`;
+    const suffix = rawHour >= 12 ? 'p. m.' : 'a. m.';
+    const hour12 = rawHour % 12 || 12;
+    return `${hour12}:${mm} ${suffix}`;
   }
 
   const date = typeof timeInput === 'string' ? new Date(timeInput) : timeInput;
@@ -42,8 +43,7 @@ export function formatTimeBogota(timeInput: string | Date | null | undefined): s
     timeZone: 'America/Bogota',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
-    hour12: false
+    hour12: true
   }).format(date);
 }
 

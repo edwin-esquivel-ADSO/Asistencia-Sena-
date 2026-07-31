@@ -9,7 +9,9 @@
     "db:migrate": "node database/migrate.js"
   },
   "dependencies": {
+    "@vladmandic/face-api": "^1.7.15",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
     "clsx": "^2.1.1",
     "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.3",

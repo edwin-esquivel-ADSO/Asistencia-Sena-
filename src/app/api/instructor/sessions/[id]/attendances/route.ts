@@ -19,7 +19,11 @@ export async function GET(
   }
 
   try {
-    const session = await queryOne(`SELECT * FROM qr_sessions WHERE id = $1`, [sessionId]);
+    if (user.role !== 'instructor') {
+      return NextResponse.json({ error: 'Acceso no autorizado' }, { status: 403 });
+    }
+
+    const session = await queryOne(`SELECT * FROM qr_sessions WHERE id = $1 AND instructor_id = $2`, [sessionId, user.id]);
     if (!session) {
       return NextResponse.json({ error: 'Sesión no encontrada' }, { status: 404 });
     }

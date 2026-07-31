@@ -22,7 +22,7 @@ export async function POST(
   }
 
   try {
-    const parentSession = await queryOne(`SELECT * FROM qr_sessions WHERE id = $1`, [parentSessionId]);
+    const parentSession = await queryOne(`SELECT * FROM qr_sessions WHERE id = $1 AND instructor_id = $2`, [parentSessionId, user.id]);
     if (!parentSession) {
       return NextResponse.json({ error: 'La sesión de asistencia de origen no existe' }, { status: 404 });
     }

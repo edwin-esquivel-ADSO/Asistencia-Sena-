@@ -86,25 +86,38 @@ export async function POST(request: Request) {
       );
     }
 
-    // Optional: save custom manual entries to master records if explicitly requested
-    if (save_master_data) {
-      await query(
-        `INSERT INTO fichas (code, program_name) VALUES ($1, $2) ON CONFLICT (code) DO NOTHING`,
-        [ficha_code.trim(), program_name?.trim() || 'Programa Personalizado']
-      );
-      await query(
-        `INSERT INTO ambientes (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-        [ambiente_name.trim()]
-      );
+    // Toda ficha creada manualmente queda registrada para usos posteriores.
+    const ficha = await queryOne<any>(
+      `INSERT INTO fichas (code, program_name)
+       VALUES ($1, $2)
+       ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+       RETURNING id, code, program_name`,
+      [ficha_code.trim(), program_name?.trim() || 'Programa Personalizado']
+    );
+
+    if (!ficha) {
+      return NextResponse.json({ error: 'No fue posible registrar la ficha.' }, { status: 500 });
     }
+
+    await query(
+      `INSERT INTO instructor_fichas (instructor_id, ficha_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [user.id, ficha.id]
+    );
+
+    // El ambiente manual también permanece disponible para futuras sesiones.
+    await query(
+      `INSERT INTO ambientes (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+      [ambiente_name.trim()]
+    );
 
     const token = crypto.randomBytes(16).toString('hex');
     const session = await queryOne(`
       INSERT INTO qr_sessions (
         token, instructor_id, instructor_name, ficha_code, program_name,
-        jornada, ambiente_name, grupo, sede, duration_minutes, hours_duration,
+        ficha_id, jornada, ambiente_name, grupo, sede, duration_minutes, hours_duration,
         session_type, status, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'regular', 'active', NOW() + INTERVAL '5 minutes')
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'regular', 'active', NOW() + INTERVAL '5 minutes')
       RETURNING *
     `, [
       token,
@@ -112,6 +125,7 @@ export async function POST(request: Request) {
       user.full_name,
       ficha_code.trim(),
       program_name?.trim() || 'Formación SENA',
+      ficha.id,
       jornada.trim(),
       ambiente_name.trim(),
       grupo?.trim() || 'Grupo 1',

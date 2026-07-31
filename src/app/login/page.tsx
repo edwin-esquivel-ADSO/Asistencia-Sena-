@@ -99,11 +99,22 @@ export default function LoginPage() {
               <UserCheck size={36} />
             </div>
             <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.025em' }}>
-              Asistencia SENA
+              Login de Instructor
             </h1>
             <p style={{ color: '#64748b', fontSize: '0.925rem', marginTop: '0.25rem' }}>
-              Portal de Ingreso Seguro (Acceso por Documento y Nombre)
+              Acceso institucional para Instructores y Coordinadores SENA
             </p>
+
+            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem', background: '#e2e8f0', color: '#0f172a', borderRadius: '8px' }}
+                onClick={() => router.push('/aprendiz/acceso')}
+              >
+                ¿Eres Aprendiz? Ir a Acceso de Aprendiz →
+              </button>
+            </div>
           </div>
 
           {error && (

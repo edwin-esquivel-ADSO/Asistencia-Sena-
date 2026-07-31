@@ -145,43 +145,112 @@ export async function POST(request: Request) {
     // Determine state and registration type based on session_type
     const isLateSession = session.session_type === 'late_qr';
     const estado = isLateSession ? 'Tarde' : 'Presente';
-    const registro_tipo = isLateSession ? 'tarde_qr' : 'puntual';
+    const registro_tipo = isLateSession ? 'qr_tardio' : 'puntual';
 
-    // Insert attendance using server timestamp (CURRENT_DATE and CURRENT_TIME)
-    const attendance = await queryOne(`
-      INSERT INTO attendances (
-        qr_session_id, fecha, hora, instructor_name, ficha_code, jornada, ambiente_name,
-        grupo, sede, aprendiz_name, aprendiz_document, estado, registro_tipo,
-        horas, ip_publica, latitud, longitud, precision_gps, location_status,
-        navegador, dispositivo
-      ) VALUES (
-        $1, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17,
-        $18, $19
-      )
-      RETURNING *
-    `, [
-      session.id,
-      session.instructor_name,
-      session.ficha_code,
-      session.jornada,
-      session.ambiente_name,
-      session.grupo || 'Grupo 1',
-      session.sede || 'Sede Principal',
-      cleanName,
-      cleanDocument,
-      estado,
-      registro_tipo,
-      session.hours_duration || 6,
-      clientIp,
-      String(studentLat),
-      String(studentLon),
-      precision_gps || 'GPS Alta Precisión',
-      location_status || 'Permiso concedido',
-      navegador,
-      dispositivo
-    ]);
+    // Obtener sesión activa del aprendiz (sena_aprendiz_session) si está disponible
+    const { getCurrentAprendiz } = await import('@/lib/aprendiz-auth');
+    const aprendizSession = await getCurrentAprendiz();
+
+    // Intentar relacionar con el aprendiz registrado en la DB
+    const aprendizDb = await queryOne<any>(
+      `SELECT id FROM aprendices WHERE document = $1 LIMIT 1`,
+      [cleanDocument]
+    );
+
+    // Obtener la última verificación facial reciente del aprendiz si existe
+    let faceVerifId = null;
+    if (aprendizDb) {
+      const lastVerif = await queryOne<any>(
+        `SELECT id FROM face_verifications WHERE aprendiz_id = $1 AND result = 'verified' ORDER BY created_at DESC LIMIT 1`,
+        [aprendizDb.id]
+      );
+      faceVerifId = lastVerif?.id || null;
+    }
+
+    let attendance: any = null;
+
+    if (isLateSession && session.parent_session_id) {
+      // Buscar falta previa registrada en la sesión principal
+      const existingAbsence = await queryOne<any>(
+        `SELECT id FROM attendances WHERE qr_session_id = $1 AND aprendiz_document = $2 LIMIT 1`,
+        [session.parent_session_id, cleanDocument]
+      );
+
+      if (existingAbsence) {
+        // Transformar el registro principal de Falta a Tarde sin duplicar fila
+        attendance = await queryOne(`
+          UPDATE attendances SET
+            estado = 'Tarde',
+            registro_tipo = 'qr_tardio',
+            hora = CURRENT_TIME,
+            horas = $1,
+            ip_publica = $2,
+            latitud = $3,
+            longitud = $4,
+            precision_gps = $5,
+            location_status = $6,
+            navegador = $7,
+            dispositivo = $8,
+            aprendiz_id = COALESCE($9, aprendiz_id),
+            face_verification_id = COALESCE($10, face_verification_id),
+            updated_at = NOW()
+          WHERE id = $11
+          RETURNING *
+        `, [
+          session.hours_duration || 6,
+          clientIp,
+          String(studentLat),
+          String(studentLon),
+          precision_gps || 'Ubicación reportada por el dispositivo',
+          location_status || 'Permiso concedido',
+          navegador,
+          dispositivo,
+          aprendizDb?.id || null,
+          faceVerifId,
+          existingAbsence.id
+        ]);
+      }
+    }
+
+    if (!attendance) {
+      // Insert attendance using server timestamp
+      attendance = await queryOne(`
+        INSERT INTO attendances (
+          qr_session_id, fecha, hora, instructor_name, ficha_code, jornada, ambiente_name,
+          grupo, sede, aprendiz_name, aprendiz_document, estado, registro_tipo,
+          horas, ip_publica, latitud, longitud, precision_gps, location_status,
+          navegador, dispositivo, aprendiz_id, face_verification_id
+        ) VALUES (
+          $1, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5,
+          $6, $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16, $17,
+          $18, $19, $20, $21
+        )
+        RETURNING *
+      `, [
+        session.parent_session_id || session.id,
+        session.instructor_name,
+        session.ficha_code,
+        session.jornada,
+        session.ambiente_name,
+        session.grupo || 'Grupo 1',
+        session.sede || 'Sede Principal',
+        cleanName,
+        cleanDocument,
+        estado,
+        registro_tipo,
+        session.hours_duration || 6,
+        clientIp,
+        String(studentLat),
+        String(studentLon),
+        precision_gps || 'Ubicación reportada por el dispositivo',
+        location_status || 'Permiso concedido',
+        navegador,
+        dispositivo,
+        aprendizDb?.id || null,
+        faceVerifId
+      ]);
+    }
 
     return NextResponse.json({
       success: true,

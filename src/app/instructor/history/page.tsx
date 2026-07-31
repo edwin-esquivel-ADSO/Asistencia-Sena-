@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import {
   History, ArrowLeft, Search, Edit3, MapPin,
   Paperclip, ChevronDown, ChevronRight, Calendar, Clock,
-  Filter, FileSpreadsheet, FileText, Globe, Monitor
+  Filter, FileSpreadsheet, FileText, Globe, Monitor, QrCode, X
 } from 'lucide-react';
 import { formatDateBogota, formatTimeBogota, formatDateFilenameBogota } from '@/lib/date-utils';
 
@@ -24,6 +24,7 @@ interface SessionItem {
   duration_minutes: number;
   hours_duration: number;
   status: string;
+  session_type?: string;
   created_at: string;
   expires_at: string;
   total_asistentes: number;
@@ -85,6 +86,8 @@ export default function InstructorHistoryPage() {
   const [editExcuse, setEditExcuse] = useState('');
   const [editExcuseFile, setEditExcuseFile] = useState<File | null>(null);
   const [uploadingEditFile, setUploadingEditFile] = useState(false);
+  const [lateQrDataUrl, setLateQrDataUrl] = useState<string | null>(null);
+  const [lateQrLoading, setLateQrLoading] = useState<number | null>(null);
 
   useEffect(() => {
     loadHistory();
@@ -178,6 +181,20 @@ export default function InstructorHistoryPage() {
     }
   };
 
+  const handleReopenLate = async (sessionId: number) => {
+    setLateQrLoading(sessionId);
+    try {
+      const res = await fetch(`/api/instructor/sessions/${sessionId}/late-qr`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No fue posible abrir el QR tardío.');
+      setLateQrDataUrl(data.qr_data_url);
+    } catch (err: any) {
+      alert(err.message || 'No fue posible abrir el QR tardío.');
+    } finally {
+      setLateQrLoading(null);
+    }
+  };
+
   // Extract unique filter options
   const uniqueFichas = Array.from(new Set(sessions.map(s => s.ficha_code))).filter(Boolean);
   const uniqueAmbientes = Array.from(new Set(sessions.map(s => s.ambiente_name))).filter(Boolean);
@@ -257,6 +274,7 @@ export default function InstructorHistoryPage() {
         'Horas Certificadas',
         'Tipo Registro',
         'Hora Exacta Registro (Servidor)',
+        'Verificación Facial',
         'Coordenadas GPS',
         'Precisión GPS',
         'IP Pública',
@@ -283,6 +301,7 @@ export default function InstructorHistoryPage() {
         att.horas || 0,
         att.registro_tipo ? att.registro_tipo.replace('_', ' ') : 'Puntual',
         att.hora ? formatTimeBogota(att.hora) : '',
+        att.estado === 'Presente' ? 'Verificado en Servidor' : 'Manual / No aplica',
         hasGps ? `${att.latitud}, ${att.longitud}` : att.location_status || 'Sin GPS',
         att.precision_gps || 'No disponible',
         att.ip_publica || 'Desconocida',
@@ -319,6 +338,15 @@ export default function InstructorHistoryPage() {
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, `Sesion_${session.id}`);
+
+    const appendFilteredSheet = (name: string, rows: typeof dataRows) => {
+      const sheet = XLSX.utils.aoa_to_sheet([headerRows[10], ...rows]);
+      sheet['!cols'] = worksheet['!cols'];
+      XLSX.utils.book_append_sheet(workbook, sheet, name);
+    };
+    appendFilteredSheet('Presentes', dataRows.filter((row) => row[3] === 'Presente'));
+    appendFilteredSheet('Tardes', dataRows.filter((row) => String(row[3]).includes('Tarde')));
+    appendFilteredSheet('No presentes', dataRows.filter((row) => row[3] === 'Falta' || row[3] === 'Justificado'));
 
     const fileName = `Lista_Asistencia_Ficha_${session.ficha_code}_Sesion_${session.id}_${filenameDateStr}.xlsx`;
     XLSX.writeFile(workbook, fileName);
@@ -549,6 +577,16 @@ export default function InstructorHistoryPage() {
                         <FileSpreadsheet size={16} style={{ color: '#39a900' }} />
                         Exportar Excel de esta sesión
                       </button>
+                      {session.status === 'finished' && session.session_type !== 'late_qr' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReopenLate(session.id); }}
+                          disabled={lateQrLoading === session.id}
+                          className="btn-secondary"
+                          style={{ padding: '0.45rem 0.85rem', fontSize: '0.825rem', background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a' }}
+                        >
+                          <QrCode size={16} /> {lateQrLoading === session.id ? 'Abriendo...' : 'Reabrir para tardíos'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -739,6 +777,17 @@ export default function InstructorHistoryPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {lateQrDataUrl && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px', textAlign: 'center' }}>
+            <button onClick={() => setLateQrDataUrl(null)} style={{ float: 'right', border: 'none', background: 'none', cursor: 'pointer' }} aria-label="Cerrar"><X size={20} /></button>
+            <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.5rem' }}>QR para llegadas tardías</h2>
+            <p style={{ color: '#64748b', fontSize: '0.85rem' }}>Este QR estará activo cinco minutos y registrará la asistencia como tardía.</p>
+            <img src={lateQrDataUrl} alt="Código QR para tardíos" style={{ width: '100%', maxWidth: '320px', marginTop: '1rem', border: '3px solid #fef08a', borderRadius: '12px', padding: '0.5rem' }} />
           </div>
         </div>
       )}
