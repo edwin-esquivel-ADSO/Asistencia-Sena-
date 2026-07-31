@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import {
   UserCheck, ShieldCheck, UserPlus, LogOut, CheckCircle, XCircle, Search,
-  Edit3, BarChart3, FileSpreadsheet, MapPin, Paperclip, Globe, Monitor
+  Edit3, BarChart3, FileSpreadsheet, MapPin, Paperclip, Globe, Monitor, Users
 } from 'lucide-react';
 import { formatDateBogota, formatTimeBogota, formatDateFilenameBogota } from '@/lib/date-utils';
 
@@ -233,10 +233,13 @@ export default function CoordinatorDashboard() {
           <span>Panel de Coordinación SENA</span>
           <span className="brand-badge">Coordinador</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
             Hola, <strong>{currentUser?.full_name}</strong>
           </span>
+          <button onClick={() => router.push('/instructor/aprendices')} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
+            <Users size={16} /> Gestionar Fichas y Aprendices
+          </button>
           <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
             <LogOut size={16} /> Salir
           </button>

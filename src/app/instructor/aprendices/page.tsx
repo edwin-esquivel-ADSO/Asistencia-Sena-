@@ -2,18 +2,20 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Save, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, Save, UserPlus, Users, Trash2, AlertCircle } from 'lucide-react';
 
 type Aprendiz = {
   id: number;
   full_name: string;
   document: string;
   is_active: boolean;
+  deactivation_reason?: string | null;
   face_registered_at: string | null;
 };
 
 export default function InstructorAprendicesPage() {
   const router = useRouter();
+  const [userRole, setUserRole] = useState<'instructor' | 'coordinador'>('instructor');
   const [fichas, setFichas] = useState<any[]>([]);
   const [fichaCode, setFichaCode] = useState('');
   const [aprendices, setAprendices] = useState<Aprendiz[]>([]);
@@ -22,13 +24,19 @@ export default function InstructorAprendicesPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Modal de retiro
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
+  const [selectedAprendiz, setSelectedAprendiz] = useState<Aprendiz | null>(null);
+  const [removalReason, setRemovalReason] = useState('');
+
   useEffect(() => {
     (async () => {
       const me = await fetch('/api/auth/me').then(r => r.json()).catch(() => null);
-      if (!me?.authenticated || me.user?.role !== 'instructor') {
+      if (!me?.authenticated || (me.user?.role !== 'instructor' && me.user?.role !== 'coordinador')) {
         router.push('/login');
         return;
       }
+      setUserRole(me.user.role);
       const data = await fetch('/api/instructor/options').then(r => r.json());
       setFichas(data.fichas || []);
       setLoading(false);
@@ -62,6 +70,32 @@ export default function InstructorAprendicesPage() {
     } else setMessage('Cambio guardado.');
   };
 
+  const handleRemoveClick = (ap: Aprendiz) => {
+    setSelectedAprendiz(ap);
+    setRemovalReason('');
+    setShowRemoveModal(true);
+  };
+
+  const confirmRemoval = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAprendiz) return;
+
+    const res = await fetch('/api/instructor/roster', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: selectedAprendiz.id, reason: removalReason.trim() })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      setMessage(data.error || 'No fue posible retirar el aprendiz.');
+    } else {
+      setMessage(`Aprendiz "${selectedAprendiz.full_name}" retirado con éxito.`);
+      setShowRemoveModal(false);
+      await loadRoster();
+    }
+  };
+
   const addAprendiz = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!fichaCode) return;
@@ -80,8 +114,8 @@ export default function InstructorAprendicesPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       <header className="header-bar">
-        <div className="brand-title"><Users size={28} style={{ color: '#39a900' }} /><span>Aprendices por ficha</span></div>
-        <button onClick={() => router.push('/instructor/dashboard')} className="btn-secondary"><ArrowLeft size={16} /> Volver al panel</button>
+        <div className="brand-title"><Users size={28} style={{ color: '#39a900' }} /><span>Gestión de Aprendices por Ficha ({userRole === 'coordinador' ? 'Coordinador' : 'Instructor'})</span></div>
+        <button onClick={() => router.push(userRole === 'coordinador' ? '/coordinador/dashboard' : '/instructor/dashboard')} className="btn-secondary"><ArrowLeft size={16} /> Volver al panel</button>
       </header>
       <main className="container" style={{ maxWidth: '1100px' }}>
         <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '1rem' }}>
@@ -106,17 +140,70 @@ export default function InstructorAprendicesPage() {
             <div className="glass-card" style={{ padding: '1.25rem', overflowX: 'auto' }}>
               <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem' }}>Listado de la ficha ({aprendices.length})</h2>
               <table className="custom-table">
-                <thead><tr><th>Nombre completo</th><th>Documento</th><th>Registro facial</th><th>Estado</th><th>Acción</th></tr></thead>
+                <thead><tr><th>Nombre completo</th><th>Documento</th><th>Registro facial</th><th>Estado / Motivo</th><th>Acciones</th></tr></thead>
                 <tbody>{aprendices.map(ap => <tr key={ap.id}>
                   <td><input className="form-input" value={ap.full_name} onChange={(e) => setAprendices(rows => rows.map(row => row.id === ap.id ? { ...row, full_name: e.target.value } : row))} /></td>
                   <td><input className="form-input" value={ap.document} onChange={(e) => setAprendices(rows => rows.map(row => row.id === ap.id ? { ...row, document: e.target.value } : row))} /></td>
                   <td>{ap.face_registered_at ? 'Registrado' : 'Pendiente'}</td>
-                  <td>{ap.is_active ? 'Activo' : 'Inactivo'}</td>
-                  <td style={{ display: 'flex', gap: '0.5rem' }}><button className="btn-secondary" onClick={() => updateAprendiz(ap, {})}><Save size={14} /> Guardar</button><button className="btn-secondary" onClick={() => updateAprendiz(ap, { is_active: !ap.is_active })}>{ap.is_active ? 'Desactivar' : 'Activar'}</button></td>
+                  <td>
+                    {ap.is_active ? (
+                      <span className="badge-status badge-presente">Activo</span>
+                    ) : (
+                      <div>
+                        <span className="badge-status badge-falta">Inactivo / Retirado</span>
+                        {ap.deactivation_reason && (
+                          <div style={{ fontSize: '0.75rem', color: '#b91c1c', marginTop: '0.2rem' }}>
+                            Motivo: {ap.deactivation_reason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn-secondary" onClick={() => updateAprendiz(ap, {})} title="Guardar cambios"><Save size={14} /> Guardar</button>
+                    {ap.is_active ? (
+                      <button className="btn-secondary" style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' }} onClick={() => handleRemoveClick(ap)} title="Retirar aprendiz de la ficha">
+                        <Trash2 size={14} /> Retirar
+                      </button>
+                    ) : (
+                      <button className="btn-secondary" onClick={() => updateAprendiz(ap, { is_active: true })}>Reactivar</button>
+                    )}
+                  </td>
                 </tr>)}</tbody>
               </table>
             </div>
           </>
+        )}
+
+        {/* MODAL RETIRAR APRENDIZ CON MOTIVO */}
+        {showRemoveModal && selectedAprendiz && (
+          <div className="modal-overlay">
+            <div className="modal-content">
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#991b1b', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertCircle size={20} /> Retirar Aprendiz: {selectedAprendiz.full_name}
+              </h2>
+              <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '1rem' }}>
+                Por favor ingrese el motivo institucional del retiro o desvinculación de esta ficha.
+              </p>
+              <form onSubmit={confirmRemoval}>
+                <div className="form-group">
+                  <label className="form-label">Motivo de Retiro *</label>
+                  <textarea
+                    required
+                    className="form-textarea"
+                    rows={3}
+                    placeholder="Ej. Retiro voluntario, traslado de ficha, sanción disciplinaria..."
+                    value={removalReason}
+                    onChange={(e) => setRemovalReason(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+                  <button type="button" className="btn-secondary" onClick={() => setShowRemoveModal(false)}>Cancelar</button>
+                  <button type="submit" className="btn-primary" style={{ background: '#dc2626' }}>Confirmar Retiro</button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
       </main>
     </div>

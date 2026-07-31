@@ -41,9 +41,22 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
+    // Emitir sesión segura de aprendiz de inmediato para consultar su historial
+    const { signAprendizSessionToken } = await import('@/lib/aprendiz-auth');
+    const aprendizSession = {
+      id: aprendiz.id,
+      document: aprendiz.document,
+      full_name: aprendiz.full_name,
+      ficha_id: aprendiz.ficha_id,
+      face_verified: Boolean(aprendiz.face_asset_public_id),
+      verified_at: new Date().toISOString()
+    };
+
+    const token = signAprendizSessionToken(aprendizSession);
+    const response = NextResponse.json({
       exists: true,
-      has_face_registered: Boolean(aprendiz.face_asset_public_id),
+      success: true,
+      redirect: '/aprendiz/dashboard',
       aprendiz: {
         id: aprendiz.id,
         document: aprendiz.document,
@@ -52,6 +65,18 @@ export async function POST(request: Request) {
         program_name: aprendiz.program_name
       }
     });
+
+    response.cookies.set({
+      name: 'sena_aprendiz_session',
+      value: token,
+      httpOnly: true,
+      path: '/',
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 8 * 60 * 60,
+    });
+
+    return response;
 
   } catch (error: any) {
     console.error('Error al verificar identidad de aprendiz:', error);

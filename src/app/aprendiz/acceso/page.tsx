@@ -37,16 +37,12 @@ export default function AprendizAccesoPage() {
 
       if (!res.ok) {
         setError(data.error || 'Error al validar identidad');
+      } else if (!data.exists) {
+        setError(data.message || 'No existe un perfil registrado con este documento.');
       } else {
-        // Almacenar temporalmente en sessionStorage para el siguiente paso del flujo
         sessionStorage.setItem('temp_aprendiz_doc', document.trim());
         sessionStorage.setItem('temp_aprendiz_name', fullName.trim());
-
-        if (data.exists && data.has_face_registered) {
-          router.push('/aprendiz/verificar');
-        } else {
-          router.push('/aprendiz/primera-vez');
-        }
+        router.push(data.redirect || '/aprendiz/dashboard');
       }
     } catch (err: any) {
       setError('Error de conexión con el servidor. Intente nuevamente.');

@@ -243,6 +243,8 @@ async function migrate() {
                 preferences_json JSONB DEFAULT '{"notify_excuses": true, "notify_absences": true}'::jsonb,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+       
+AMP
             );
 
             -- 12. Audit Events Table
@@ -262,13 +264,15 @@ async function migrate() {
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Campos aditivos a aprendices
+            ALTER TABLE aprendices ADD COLUMN IF NOT EXISTS deactivation_reason TEXT DEFAULT NULL;
+
             -- Campos aditivos a attendances
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS tarea_registrada BOOLEAN DEFAULT FALSE;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS tarea_nota TEXT DEFAULT NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS aprendiz_id INT REFERENCES aprendices(id) ON DELETE SET NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS face_verification_id INT REFERENCES face_verifications(id) ON DELETE SET NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS arrival_time VARCHAR(20) DEFAULT NULL;
-
             -- Indexes para tablas aditivas
             CREATE INDEX IF NOT EXISTS idx_users_document ON users(document);
             CREATE INDEX IF NOT EXISTS idx_users_name ON users(full_name);
