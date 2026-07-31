@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Camera, ShieldCheck, ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react';
+import { Camera, ShieldCheck, ArrowLeft, RefreshCw, AlertCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AprendizVerificarPage() {
@@ -17,6 +17,8 @@ export default function AprendizVerificarPage() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
     const storedDoc = sessionStorage.getItem('temp_aprendiz_doc');
@@ -25,8 +27,32 @@ export default function AprendizVerificarPage() {
     if (storedName) setFullName(storedName);
   }, []);
 
+  const loadFaceModels = async () => {
+    if (modelsLoaded) return true;
+    setModelsLoading(true);
+    setError(null);
+    try {
+      const faceapi = await import('@vladmandic/face-api');
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model';
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      setModelsLoaded(true);
+      return true;
+    } catch (err) {
+      setError('No se pudieron cargar los modelos de reconocimiento facial. Verifique su conexión a internet.');
+      return false;
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
   const startCamera = async () => {
     setError(null);
+    const ok = await loadFaceModels();
+    if (!ok) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
@@ -49,74 +75,82 @@ export default function AprendizVerificarPage() {
     }
   };
 
-  const capturePhoto = () => {
+  const captureAndVerify = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setCapturedImage(dataUrl);
-      stopCamera();
-    }
-  };
-
-  const handleVerify = async (manualRequest: boolean = false) => {
     setError(null);
     setLoading(true);
 
     try {
-      if (manualRequest) {
-        const res = await fetch('/api/aprendiz/verify-face', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            document,
-            full_name: fullName,
-            result: 'manual_review',
-            failure_reason: 'Solicitud manual del aprendiz'
-          })
-        });
-        const data = await res.json();
-        setError('Solicitud de revisión manual registrada. Su instructor podrá validar su asistencia.');
-        return;
-      }
+      const faceapi = await import('@vladmandic/face-api');
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas no disponible');
 
-      if (!capturedImage) {
-        setError('Tome una captura facial para verificar su identidad.');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      setCapturedImage(dataUrl);
+      stopCamera();
+
+      // Detectar rostro y extraer descriptor
+      const detection = await faceapi
+        .detectSingleFace(canvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (!detection) {
+        setError('No se detectó ningún rostro en la imagen. Asegure buena iluminación, mire de frente a la cámara e intente de nuevo.');
         setLoading(false);
         return;
       }
 
-      // Simulación de comparación de similitud facial gratuita con score razonable para demostración MVP
-      // En entorno de navegador se compara el descriptor extraído contra la referencia almacenada.
-      const matchScore = 0.42; // Cumple umbral <= 0.55
+      const candidateDescriptor = Array.from(detection.descriptor);
 
+      // Enviar descriptor al servidor para comparación contra la BD
       const res = await fetch('/api/aprendiz/verify-face', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document,
           full_name: fullName,
-          match_score: matchScore,
-          result: 'verified'
+          candidate_descriptor: candidateDescriptor,
         })
       });
 
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        setError(data.message || 'La verificación facial no fue exitosa. Puede intentar nuevamente o solicitar validación manual.');
+        setError(data.message || data.error || 'La verificación facial no fue exitosa. Puede intentar nuevamente o solicitar validación manual.');
       } else {
         router.push(data.redirect || '/aprendiz/dashboard');
       }
 
     } catch (err: any) {
-      setError('Error al procesar la verificación facial.');
+      setError('Error al procesar la verificación facial. Verifique su conexión e intente de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleManualReview = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await fetch('/api/aprendiz/verify-face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document,
+          full_name: fullName,
+          manual_review_requested: true,
+          failure_reason: 'Solicitud manual del aprendiz desde portal de acceso'
+        })
+      });
+      setError('Solicitud de revisión manual registrada. Notifique a su instructor para validar su acceso.');
+    } catch {
+      setError('Error al registrar la solicitud. Contacte a su instructor directamente.');
     } finally {
       setLoading(false);
     }
@@ -142,16 +176,29 @@ export default function AprendizVerificarPage() {
             <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.25rem' }}>
               Confirme su rostro frente a la cámara para ingresar a su panel personal
             </p>
+            {fullName && (
+              <div style={{ marginTop: '0.75rem', padding: '0.5rem 1rem', background: '#f0fdf4', borderRadius: '8px', fontSize: '0.85rem', color: '#166534', fontWeight: 600 }}>
+                Aprendiz: {fullName}
+              </div>
+            )}
           </div>
 
           {error && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '1rem', borderRadius: '12px', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
-              {error}
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '1rem', borderRadius: '12px', marginBottom: '1.5rem', fontSize: '0.875rem', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <AlertCircle size={18} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {modelsLoading && (
+            <div style={{ textAlign: 'center', padding: '1rem', background: '#f0f9ff', borderRadius: '12px', marginBottom: '1rem', fontSize: '0.875rem', color: '#0369a1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+              Cargando modelos de reconocimiento facial...
             </div>
           )}
 
           <div style={{ background: '#000', borderRadius: '16px', overflow: 'hidden', minHeight: '260px', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
-            {!cameraActive && !capturedImage && (
+            {!cameraActive && !capturedImage && !modelsLoading && (
               <button type="button" onClick={startCamera} className="btn-primary">
                 <Camera size={18} style={{ marginRight: '0.5rem' }} /> Activar Cámara
               </button>
@@ -160,18 +207,27 @@ export default function AprendizVerificarPage() {
             <video ref={videoRef} autoPlay playsInline style={{ width: '100%', maxHeight: '300px', display: cameraActive ? 'block' : 'none' }} />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-            {cameraActive && (
-              <button type="button" onClick={capturePhoto} className="btn-primary" style={{ position: 'absolute', bottom: '1rem' }}>
-                Verificar Rostro
+            {cameraActive && !loading && (
+              <button type="button" onClick={captureAndVerify} className="btn-primary" style={{ position: 'absolute', bottom: '1rem' }}>
+                <ShieldCheck size={18} style={{ marginRight: '0.4rem' }} /> Verificar Rostro
               </button>
             )}
 
             {capturedImage && !cameraActive && (
               <div style={{ width: '100%', position: 'relative' }}>
                 <img src={capturedImage} alt="Captura Facial" style={{ width: '100%', maxHeight: '300px', objectFit: 'cover' }} />
-                <button type="button" onClick={startCamera} className="btn-secondary" style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.8rem' }}>
-                  <RefreshCw size={14} /> Nueva Captura
-                </button>
+                {!loading && (
+                  <button type="button" onClick={() => { setCapturedImage(null); setError(null); startCamera(); }} className="btn-secondary" style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.8rem' }}>
+                    <RefreshCw size={14} /> Nueva Captura
+                  </button>
+                )}
+              </div>
+            )}
+
+            {loading && (
+              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
+                <Loader2 size={40} style={{ color: '#39a900', animation: 'spin 1s linear infinite' }} />
+                <p style={{ color: '#ffffff', fontSize: '0.9rem', fontWeight: 600 }}>Analizando rostro...</p>
               </div>
             )}
           </div>
@@ -179,17 +235,7 @@ export default function AprendizVerificarPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button
               type="button"
-              onClick={() => handleVerify(false)}
-              disabled={loading}
-              className="btn-primary"
-              style={{ width: '100%', padding: '0.85rem', fontSize: '1rem' }}
-            >
-              {loading ? 'Verificando Rostro...' : 'Confirmar e Iniciar Sesión'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleVerify(true)}
+              onClick={handleManualReview}
               disabled={loading}
               className="btn-secondary"
               style={{ width: '100%', padding: '0.75rem', fontSize: '0.875rem' }}

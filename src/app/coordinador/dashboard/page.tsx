@@ -203,13 +203,13 @@ export default function CoordinatorDashboard() {
     }
   };
 
-  const filteredInstructors = instructors.filter(i =>
+  const filteredInstructors = instructors.filter((i: User) =>
     i.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     i.document.includes(searchTerm) ||
     (i.username && i.username.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const filteredAttendances = attendances.filter(a =>
+  const filteredAttendances = attendances.filter((a: any) =>
     a.aprendiz_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     a.aprendiz_document.includes(searchTerm) ||
     a.ficha_code.includes(searchTerm) ||
