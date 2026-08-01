@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserCheck, FileText, Bell, CheckCircle2, Clock, XCircle, AlertCircle, LogOut, Upload, ShieldCheck, Sparkles } from 'lucide-react';
-import Link from 'next/link';
+import { formatDateBogota, formatTimeBogota } from '@/lib/date-utils';
 
 export default function AprendizDashboardPage() {
   const router = useRouter();
@@ -235,7 +235,7 @@ export default function AprendizDashboardPage() {
                   <tbody>
                     {attendances.map((att: any) => (
                       <tr key={att.id}>
-                        <td>{att.fecha ? new Date(att.fecha).toLocaleDateString() : ''} {att.hora}</td>
+                        <td>{att.fecha ? formatDateBogota(att.fecha) : ''} {formatTimeBogota(att.hora)}</td>
                         <td style={{ fontWeight: 600 }}>{att.instructor_name}</td>
                         <td>{att.ambiente_name}</td>
                         <td>{att.jornada}</td>

@@ -20,7 +20,7 @@ export function formatDateBogota(dateInput: string | Date | null | undefined): s
 }
 
 /**
- * Formats time in the 12-hour Colombian convention (for example, 1:01 p. m.).
+ * Formats time in the 12-hour Colombian convention (for example, 1:01 p. m. or 2:30 PM).
  * Handles TIME string "HH:MM:SS" or ISO Date string converting correctly to America/Bogota.
  */
 export function formatTimeBogota(timeInput: string | Date | null | undefined): string {
@@ -59,3 +59,4 @@ export function formatDateFilenameBogota(dateInput: string | Date | null | undef
   if (!formatted) return '01-01-2026';
   return formatted.replace(/\//g, '-');
 }
+

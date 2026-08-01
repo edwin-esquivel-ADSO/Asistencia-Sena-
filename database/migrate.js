@@ -165,6 +165,9 @@ async function migrate() {
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS excuse_path VARCHAR(255);
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS excuse_note TEXT;
 
+            ALTER TABLE attendances ALTER COLUMN fecha SET DEFAULT (NOW() AT TIME ZONE 'America/Bogota')::date;
+            ALTER TABLE attendances ALTER COLUMN hora SET DEFAULT (NOW() AT TIME ZONE 'America/Bogota')::time;
+
             -- Migración TIMESTAMPTZ para created_at y updated_at en attendances
             ALTER TABLE attendances ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
             ALTER TABLE attendances ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC';
@@ -243,8 +246,6 @@ async function migrate() {
                 preferences_json JSONB DEFAULT '{"notify_excuses": true, "notify_absences": true}'::jsonb,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-       
-AMP
             );
 
             -- 12. Audit Events Table

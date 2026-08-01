@@ -1,27 +1,8 @@
 import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
 import { validateRotativeToken, calculateDistanceMeters } from '@/lib/qr-security';
+import { parseUserAgent } from '@/lib/device-utils';
 
-function parseUserAgent(ua: string | null) {
-  if (!ua) return { navegador: 'Desconocido', dispositivo: 'Móvil/Computador' };
-  const t = ua.toLowerCase();
-
-  let navegador = 'Navegador Web';
-  if (t.includes('opera') || t.includes('opr')) navegador = 'Opera';
-  else if (t.includes('edg')) navegador = 'Edge';
-  else if (t.includes('chrome')) navegador = 'Chrome';
-  else if (t.includes('safari')) navegador = 'Safari';
-  else if (t.includes('firefox')) navegador = 'Firefox';
-
-  let dispositivo = 'Dispositivo Web';
-  if (t.includes('iphone')) dispositivo = 'iPhone';
-  else if (t.includes('ipad')) dispositivo = 'iPad';
-  else if (t.includes('android')) dispositivo = 'Android Phone';
-  else if (t.includes('windows')) dispositivo = 'Windows PC';
-  else if (t.includes('macintosh')) dispositivo = 'macOS';
-
-  return { navegador, dispositivo };
-}
 
 export async function POST(request: Request) {
   try {
