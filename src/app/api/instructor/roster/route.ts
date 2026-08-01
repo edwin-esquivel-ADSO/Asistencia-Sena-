@@ -45,6 +45,21 @@ export async function GET(request: Request) {
        WHERE i.instructor_id = $1 AND f.code = $2`,
       [user.id, fichaCode]
     );
+
+    // Si la ficha existe globalmente pero este instructor no la tiene asociada en instructor_fichas, asociársela automáticamente
+    if (!ficha) {
+      const globalFicha = await queryOne<any>(
+        `SELECT id, code, program_name FROM fichas WHERE code = $1 LIMIT 1`,
+        [fichaCode]
+      );
+      if (globalFicha) {
+        await query(
+          `INSERT INTO instructor_fichas (instructor_id, ficha_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [user.id, globalFicha.id]
+        );
+        ficha = globalFicha;
+      }
+    }
   }
 
   if (!ficha) return NextResponse.json({ error: 'No tiene acceso o no se encontró la ficha.' }, { status: 403 });
