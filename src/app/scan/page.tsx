@@ -25,14 +25,24 @@ export default function CameraScannerPage() {
         setScanResult(decodedText);
         scanner.clear();
 
-        // Redirect if it's a URL or contains token
-        if (decodedText.includes('/aprendiz/register')) {
-          window.location.href = decodedText;
-        } else if (decodedText.includes('token=')) {
-          const tokenMatch = decodedText.match(/token=([^&]+)/);
+        // Parse relative path safely to stay on the active domain
+        let targetPath = decodedText;
+        try {
+          if (decodedText.startsWith('http://') || decodedText.startsWith('https://')) {
+            const parsedUrl = new URL(decodedText);
+            targetPath = parsedUrl.pathname + parsedUrl.search;
+          }
+        } catch (e) {}
+
+        if (targetPath.includes('/aprendiz/register')) {
+          router.push(targetPath);
+        } else if (targetPath.includes('token=')) {
+          const tokenMatch = targetPath.match(/token=([^&]+)/);
           if (tokenMatch) {
             router.push(`/aprendiz/register?token=${tokenMatch[1]}`);
           }
+        } else {
+          window.location.href = targetPath;
         }
       },
       (error) => {
