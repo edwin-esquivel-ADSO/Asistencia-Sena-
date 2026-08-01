@@ -21,13 +21,16 @@ export function formatDateBogota(dateInput: string | Date | null | undefined): s
 
 /**
  * Formats time in the 12-hour Colombian convention (for example, 1:01 p. m.).
+ * Handles TIME string "HH:MM:SS" or ISO Date string converting correctly to America/Bogota.
  */
 export function formatTimeBogota(timeInput: string | Date | null | undefined): string {
   if (!timeInput) return '';
 
-  // If input is already a TIME string (e.g. "14:30:15" or "08:15:00.12345")
-  if (typeof timeInput === 'string' && /^\d{1,2}:\d{2}/.test(timeInput.trim())) {
-    const cleanTime = timeInput.trim().split('.')[0]; // remove milliseconds if any
+  const str = String(timeInput).trim();
+
+  // If input is a SQL TIME string (e.g. "19:26:15" or "07:26:00.123")
+  if (/^\d{1,2}:\d{2}/.test(str)) {
+    const cleanTime = str.split('.')[0];
     const parts = cleanTime.split(':');
     const rawHour = Number(parts[0]);
     const mm = parts[1].padStart(2, '0');
@@ -36,12 +39,13 @@ export function formatTimeBogota(timeInput: string | Date | null | undefined): s
     return `${hour12}:${mm} ${suffix}`;
   }
 
+  // If input is an ISO string or Date object
   const date = typeof timeInput === 'string' ? new Date(timeInput) : timeInput;
-  if (isNaN(date.getTime())) return String(timeInput);
+  if (isNaN(date.getTime())) return str;
 
   return new Intl.DateTimeFormat('es-CO', {
     timeZone: 'America/Bogota',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
     hour12: true
   }).format(date);

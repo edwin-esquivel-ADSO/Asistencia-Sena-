@@ -54,7 +54,7 @@ export async function POST(
                 grupo, sede, aprendiz_name, aprendiz_document, estado, registro_tipo,
                 horas, ip_publica, navegador, dispositivo, aprendiz_id
               ) VALUES (
-                $1, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5,
+                $1, (NOW() AT TIME ZONE 'America/Bogota')::date, (NOW() AT TIME ZONE 'America/Bogota')::time, $2, $3, $4, $5,
                 $6, $7, $8, $9, 'Falta', 'ausencia_automatica',
                 0, 'Sistema Server', 'Servidor Automático', 'Proceso de Cierre', $10
               )`,

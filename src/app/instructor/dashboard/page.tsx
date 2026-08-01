@@ -9,15 +9,7 @@ import {
   ShieldCheck, RefreshCw, MapPin, Paperclip, Bell, Mail, Eye, Check, X, Filter, User, FileSpreadsheet
 } from 'lucide-react';
 
-function formatTime12(value: string | null | undefined): string {
-  if (!value) return '';
-  const match = String(value).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if (!match) return String(value);
-  const hour = Number(match[1]);
-  const minute = match[2];
-  const suffix = hour >= 12 ? 'p. m.' : 'a. m.';
-  return `${hour % 12 || 12}:${minute} ${suffix}`;
-}
+import { formatDateBogota, formatTimeBogota } from '@/lib/date-utils';
 
 export default function InstructorDashboard() {
   const router = useRouter();
@@ -623,7 +615,7 @@ export default function InstructorDashboard() {
                       <tbody>
                         {filteredAttendances.map((att) => (
                           <tr key={att.id}>
-                            <td style={{ fontSize: '0.85rem', fontWeight: 600 }}>{formatTime12(att.hora)}</td>
+                            <td style={{ fontSize: '0.85rem', fontWeight: 600 }}>{formatTimeBogota(att.hora)}</td>
                             <td style={{ fontWeight: 600, color: '#0f172a' }}>{att.aprendiz_name}</td>
                             <td>
                               <span className={`badge-status ${
@@ -828,60 +820,111 @@ export default function InstructorDashboard() {
             </div>
 
             <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', marginBottom: '1rem' }}>
-              <p style={{ fontWeight: 700, color: '#0f172a' }}>{selectedAprendizDetail.aprendiz?.full_name}</p>
-              <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                Documento: {selectedAprendizDetail.aprendiz?.document} | Ficha: {selectedAprendizDetail.aprendiz?.ficha_code}
+              <p style={{ fontWeight: 700, color: '#0f172a', fontSize: '1.1rem' }}>{selectedAprendizDetail.aprendiz?.full_name}</p>
+              <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.25rem' }}>
+                Documento: <strong>{selectedAprendizDetail.aprendiz?.document}</strong> | Ficha: <strong>{selectedAprendizDetail.aprendiz?.ficha_code}</strong>
               </p>
-              <p style={{ fontSize: '0.8rem', color: '#166534', marginTop: '0.25rem' }}>
-                Estado Facial: {selectedAprendizDetail.aprendiz?.face_registered ? 'Registrado y Verificado' : 'Sin registro facial'}
-              </p>
+            </div>
 
-              {selectedAprendizDetail.aprendiz?.signed_face_url && (
-                <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-                  <img
-                    src={selectedAprendizDetail.aprendiz.signed_face_url}
-                    alt="Rostro Referencia"
-                    style={{ maxWidth: '140px', borderRadius: '12px', border: '2px solid #39a900' }}
-                  />
-                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-                    Imagen Servida con URL Firmada Temporal (5 min)
+            {/* Info de último registro: IP, GPS, Dispositivo */}
+            {selectedAprendizDetail.attendances?.length > 0 && (() => {
+              const lastAtt = selectedAprendizDetail.attendances.find((a: any) => a.estado !== 'Falta') || selectedAprendizDetail.attendances[0];
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <div style={{ background: '#f0f9ff', padding: '0.6rem', borderRadius: '8px', fontSize: '0.775rem' }}>
+                    <strong style={{ color: '#0369a1' }}>IP:</strong> <span style={{ color: '#475569' }}>{lastAtt.ip_publica || 'No disponible'}</span>
+                  </div>
+                  <div style={{ background: '#f0f9ff', padding: '0.6rem', borderRadius: '8px', fontSize: '0.775rem' }}>
+                    <strong style={{ color: '#0369a1' }}>Dispositivo:</strong> <span style={{ color: '#475569' }}>{lastAtt.dispositivo || 'No disponible'}</span>
+                  </div>
+                  <div style={{ background: '#f0f9ff', padding: '0.6rem', borderRadius: '8px', fontSize: '0.775rem', gridColumn: '1 / -1' }}>
+                    <strong style={{ color: '#0369a1' }}>GPS:</strong>{' '}
+                    {lastAtt.latitud && lastAtt.latitud !== 'Ubicación no disponible' ? (
+                      <a href={`https://maps.google.com/?q=${lastAtt.latitud},${lastAtt.longitud}`} target="_blank" rel="noopener noreferrer" style={{ color: '#166534', textDecoration: 'underline' }}>
+                        {lastAtt.latitud}, {lastAtt.longitud} (±{lastAtt.precision_gps})
+                      </a>
+                    ) : <span style={{ color: '#94a3b8' }}>No disponible</span>}
                   </div>
                 </div>
-              )}
-            </div>
+              );
+            })()}
 
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', marginBottom: '0.5rem' }}>
-              Historial de Asistencias
-            </h3>
-            <div style={{ maxHeight: '180px', overflowY: 'auto', marginBottom: '1rem' }}>
-              <table className="custom-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>GPS</th>
-                    <th>IP & Navegador</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedAprendizDetail.attendances?.map((att: any) => (
-                    <tr key={att.id}>
-                      <td style={{ fontSize: '0.775rem' }}>{new Date(att.fecha).toLocaleDateString()} {att.hora}</td>
-                      <td>
-                        <span className={`badge-status ${
-                          att.estado === 'Presente' ? 'badge-presente' :
-                          att.estado.includes('Tarde') ? 'badge-tarde' : 'badge-falta'
-                        }`}>
-                          {att.estado}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: '0.7rem' }}>{att.latitud !== 'Ubicación no disponible' ? 'Válido' : 'No disp.'}</td>
-                      <td style={{ fontSize: '0.7rem' }}>{att.ip_publica} - {att.navegador}</td>
+            {/* Faltas sin justificar */}
+            {(() => {
+              const faltas = (selectedAprendizDetail.attendances || []).filter((a: any) => a.estado === 'Falta');
+              const totalHorasFalta = faltas.reduce((sum: number, a: any) => sum + (Number(a.horas) || 0), 0);
+              return (
+                <div style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#b91c1c', marginBottom: '0.5rem' }}>
+                    Faltas sin justificar: {faltas.length} ({totalHorasFalta} horas)
+                  </h3>
+                  {faltas.length > 0 ? (
+                    <div style={{ maxHeight: '160px', overflowY: 'auto' }}>
+                      <table className="custom-table">
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Hora</th>
+                            <th>Horas</th>
+                            <th>Ambiente</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {faltas.map((att: any) => (
+                            <tr key={att.id}>
+                              <td style={{ fontSize: '0.775rem' }}>{formatDateBogota(att.fecha)}</td>
+                              <td style={{ fontSize: '0.775rem' }}>{formatTimeBogota(att.hora)}</td>
+                              <td style={{ fontSize: '0.775rem', fontWeight: 600 }}>{att.horas || 0}h</td>
+                              <td style={{ fontSize: '0.775rem' }}>{att.ambiente_name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.85rem', color: '#166534' }}>Sin faltas registradas ✓</p>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Historial completo colapsable */}
+            <details style={{ marginBottom: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, color: '#0f172a', padding: '0.5rem 0' }}>
+                <Eye size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.3rem' }} />
+                Ver historial completo ({selectedAprendizDetail.attendances?.length || 0} registros)
+              </summary>
+              <div style={{ maxHeight: '200px', overflowY: 'auto', marginTop: '0.5rem' }}>
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Hora</th>
+                      <th>Estado</th>
+                      <th>Horas</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {selectedAprendizDetail.attendances?.map((att: any) => (
+                      <tr key={att.id}>
+                        <td style={{ fontSize: '0.775rem' }}>{formatDateBogota(att.fecha)}</td>
+                        <td style={{ fontSize: '0.775rem' }}>{formatTimeBogota(att.hora)}</td>
+                        <td>
+                          <span className={`badge-status ${
+                            att.estado === 'Presente' ? 'badge-presente' :
+                            att.estado.includes('Tarde') ? 'badge-tarde' :
+                            att.estado === 'Justificado' ? 'badge-justificado' : 'badge-falta'
+                          }`}>
+                            {att.estado}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.775rem' }}>{att.horas || 0}h</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
 
             <button onClick={() => setSelectedAprendizDetail(null)} className="btn-secondary" style={{ width: '100%' }}>
               Cerrar Detalle

@@ -182,7 +182,7 @@ export async function POST(request: Request) {
           UPDATE attendances SET
             estado = 'Tarde',
             registro_tipo = 'qr_tardio',
-            hora = CURRENT_TIME,
+            hora = (NOW() AT TIME ZONE 'America/Bogota')::time,
             horas = $1,
             ip_publica = $2,
             latitud = $3,
@@ -221,7 +221,7 @@ export async function POST(request: Request) {
           horas, ip_publica, latitud, longitud, precision_gps, location_status,
           navegador, dispositivo, aprendiz_id, face_verification_id
         ) VALUES (
-          $1, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5,
+          $1, (NOW() AT TIME ZONE 'America/Bogota')::date, (NOW() AT TIME ZONE 'America/Bogota')::time, $2, $3, $4, $5,
           $6, $7, $8, $9, $10, $11,
           $12, $13, $14, $15, $16, $17,
           $18, $19, $20, $21
