@@ -1,37 +1,39 @@
 import { NextResponse } from 'next/server';
-import { query, queryOne } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
+import { sessionRepository } from '@/repositories/session.repository';
+import { attendanceRepository } from '@/repositories/attendance.repository';
+import { excuseService } from '@/services/excuse.service';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const user = await getCurrentUser();
-  if (!user) {
+  if (!user || user.role !== 'instructor') {
     return NextResponse.json({ error: 'Acceso no autorizado' }, { status: 403 });
   }
 
   const { id } = await params;
   const sessionId = parseInt(id);
 
-  if (!sessionId) {
+  if (!sessionId || isNaN(sessionId)) {
     return NextResponse.json({ error: 'ID de sesión no válido' }, { status: 400 });
   }
 
   try {
-    if (user.role !== 'instructor') {
-      return NextResponse.json({ error: 'Acceso no autorizado' }, { status: 403 });
+    const session = await sessionRepository.findById(sessionId);
+    if (!session || session.instructor_id !== user.id) {
+      return NextResponse.json({ error: 'Sesión no encontrada o no autorizada' }, { status: 404 });
     }
 
-    const session = await queryOne(`SELECT * FROM qr_sessions WHERE id = $1 AND instructor_id = $2`, [sessionId, user.id]);
-    if (!session) {
-      return NextResponse.json({ error: 'Sesión no encontrada' }, { status: 404 });
-    }
+    const rawAttendances = await attendanceRepository.findBySession(sessionId);
 
-    const attendances = await query(
-      `SELECT * FROM attendances WHERE qr_session_id = $1 ORDER BY hora DESC`,
-      [sessionId]
-    );
+    const attendances = rawAttendances.map(att => ({
+      ...att,
+      signed_excuse_url: att.excuse_path ? excuseService.resolveSignedFileUrl(att.excuse_path) : null
+    }));
 
     return NextResponse.json({
       session,

@@ -1,26 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { query, queryOne } from '@/lib/db';
+import { aprendizService, ValidationError } from '@/services/aprendiz.service';
+import { fichaRepository } from '@/repositories/ficha.repository';
+import { auditRepository } from '@/repositories/audit.repository';
+import {
+  AprendizCreateSchema,
+  AprendizUpdateSchema,
+  AprendizDeactivateSchema
+} from '@/domain/aprendiz.domain';
 
-type ImportedStudent = { full_name?: unknown; document?: unknown };
-
-async function ensureInstructorFicha(instructorId: number, fichaCode: string, programName?: string) {
-  const ficha = await queryOne<any>(
-    `INSERT INTO fichas (code, program_name)
-     VALUES ($1, $2)
-     ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
-     RETURNING id, code, program_name`,
-    [fichaCode, programName?.trim() || 'Formación SENA']
-  );
-  if (!ficha) throw new Error('No fue posible guardar la ficha.');
-
-  await query(
-    `INSERT INTO instructor_fichas (instructor_id, ficha_id)
-     VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-    [instructorId, ficha.id]
-  );
-  return ficha;
-}
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -28,48 +17,25 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Acceso no autorizado.' }, { status: 403 });
   }
 
-  const fichaCode = new URL(request.url).searchParams.get('ficha_code')?.trim();
-  if (!fichaCode) return NextResponse.json({ error: 'La ficha es obligatoria.' }, { status: 400 });
+  const { searchParams } = new URL(request.url);
+  const fichaCode = searchParams.get('ficha_code')?.trim();
+  const includeInactive = searchParams.get('include_inactive') === 'true';
 
-  let ficha: any = null;
-  if (user.role === 'coordinador') {
-    ficha = await queryOne<any>(
-      `SELECT id, code, program_name FROM fichas WHERE code = $1 LIMIT 1`,
-      [fichaCode]
-    );
-  } else {
-    ficha = await queryOne<any>(
-      `SELECT f.id, f.code, f.program_name
-       FROM fichas f
-       JOIN instructor_fichas i ON i.ficha_id = f.id
-       WHERE i.instructor_id = $1 AND f.code = $2`,
-      [user.id, fichaCode]
-    );
-
-    // Si la ficha existe globalmente pero este instructor no la tiene asociada en instructor_fichas, asociársela automáticamente
-    if (!ficha) {
-      const globalFicha = await queryOne<any>(
-        `SELECT id, code, program_name FROM fichas WHERE code = $1 LIMIT 1`,
-        [fichaCode]
-      );
-      if (globalFicha) {
-        await query(
-          `INSERT INTO instructor_fichas (instructor_id, ficha_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [user.id, globalFicha.id]
-        );
-        ficha = globalFicha;
-      }
-    }
+  if (!fichaCode) {
+    return NextResponse.json({ error: 'El código de ficha es obligatorio.' }, { status: 400 });
   }
 
-  if (!ficha) return NextResponse.json({ error: 'No tiene acceso o no se encontró la ficha.' }, { status: 403 });
+  const ficha = await fichaRepository.findFichaByCode(fichaCode);
+  if (!ficha) {
+    return NextResponse.json({ error: 'La ficha especificada no existe.' }, { status: 404 });
+  }
 
-  const aprendices = await query<any>(
-    `SELECT id, full_name, document, is_active, deactivation_reason, face_registered_at, created_at, updated_at
-     FROM aprendices WHERE ficha_id = $1 ORDER BY full_name ASC`,
-    [ficha.id]
-  );
-  return NextResponse.json({ ficha, aprendices });
+  try {
+    const aprendices = await aprendizService.getRoster(fichaCode, includeInactive);
+    return NextResponse.json({ success: true, ficha, aprendices });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || 'Error al obtener aprendices.' }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -80,51 +46,44 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const fichaCode = String(body.ficha_code || '').trim();
-    const programName = String(body.program_name || '').trim();
-    if (!fichaCode) return NextResponse.json({ error: 'La ficha es obligatoria.' }, { status: 400 });
-
-    const ficha = await ensureInstructorFicha(user.id, fichaCode, programName);
     const action = body.action || 'upsert';
-    const rows: ImportedStudent[] = action === 'import' ? body.students : [body];
-    if (!Array.isArray(rows) || rows.length === 0 || rows.length > 1000) {
-      return NextResponse.json({ error: 'Cargue entre 1 y 1000 aprendices válidos.' }, { status: 400 });
-    }
 
-    let imported = 0;
-    const rejected: number[] = [];
-    for (let index = 0; index < rows.length; index += 1) {
-      const row = rows[index] || {};
-      const fullName = String(row.full_name || '').trim().replace(/\s+/g, ' ');
-      const document = String(row.document || '').trim();
-      if (!fullName || !document || fullName.length > 150 || document.length > 50) {
-        rejected.push(index + 1);
-        continue;
+    if (action === 'upsert') {
+      const parseResult = AprendizCreateSchema.safeParse({
+        ficha_code: body.ficha_code,
+        document: body.document,
+        full_name: body.full_name
+      });
+
+      if (!parseResult.success) {
+        return NextResponse.json(
+          { error: parseResult.error.issues[0]?.message || 'Datos de aprendiz inválidos.' },
+          { status: 400 }
+        );
       }
-      await query(
-        `INSERT INTO aprendices (document, full_name, ficha_id, is_active, deactivation_reason)
-         VALUES ($1, $2, $3, true, NULL)
-         ON CONFLICT (document) DO UPDATE SET
-           full_name = EXCLUDED.full_name,
-           ficha_id = EXCLUDED.ficha_id,
-           is_active = true,
-           deactivation_reason = NULL,
-           updated_at = NOW()`,
-        [document, fullName, ficha.id]
-      );
-      imported += 1;
+
+      const aprendiz = await aprendizService.addAprendiz(parseResult.data);
+
+      await auditRepository.log({
+        actor_role: user.role,
+        actor_id: user.id,
+        actor_identifier: user.document,
+        event_type: 'APRENDIZ_UPSERTED',
+        target_entity: 'aprendices',
+        target_id: aprendiz.id,
+        metadata: { document: aprendiz.document, ficha_code: body.ficha_code }
+      });
+
+      return NextResponse.json({ success: true, aprendiz, message: 'Aprendiz guardado exitosamente.' });
     }
 
-    await query(
-      `INSERT INTO audit_events (actor_role, actor_id, actor_identifier, event_type, target_entity, target_id, metadata_json)
-       VALUES ($1, $2, $3, $4, 'fichas', $5, $6)`,
-      [user.role, user.id, user.document, action === 'import' ? 'ROSTER_IMPORTED' : 'ROSTER_MEMBER_UPSERTED', ficha.id, JSON.stringify({ imported, rejected })]
-    );
-
-    return NextResponse.json({ success: true, ficha, imported, rejected });
+    return NextResponse.json({ error: 'Acción no soportada.' }, { status: 400 });
   } catch (error: any) {
-    console.error('Error administrando listado de aprendices:', error);
-    return NextResponse.json({ error: 'No fue posible guardar el listado de aprendices.' }, { status: 500 });
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error('Error in roster POST:', error);
+    return NextResponse.json({ error: 'Error al agregar aprendiz.' }, { status: 500 });
   }
 }
 
@@ -133,43 +92,38 @@ export async function PUT(request: Request) {
   if (!user || (user.role !== 'instructor' && user.role !== 'coordinador')) {
     return NextResponse.json({ error: 'Acceso no autorizado.' }, { status: 403 });
   }
+
   try {
-    const { id, full_name, document, is_active, reason } = await request.json();
-    if (!id || !String(full_name || '').trim() || !String(document || '').trim()) {
-      return NextResponse.json({ error: 'Nombre, documento e identificador son obligatorios.' }, { status: 400 });
-    }
+    const body = await request.json();
+    const parseResult = AprendizUpdateSchema.safeParse(body);
 
-    const deactivationReason = is_active === false && reason ? String(reason).trim() : null;
-
-    let updated: any = null;
-    if (user.role === 'coordinador') {
-      updated = await queryOne<any>(
-        `UPDATE aprendices SET full_name = $1, document = $2, is_active = COALESCE($3, is_active), deactivation_reason = $4, updated_at = NOW()
-         WHERE id = $5
-         RETURNING id, full_name, document, is_active, deactivation_reason`,
-        [String(full_name).trim(), String(document).trim(), typeof is_active === 'boolean' ? is_active : null, deactivationReason, id]
-      );
-    } else {
-      updated = await queryOne<any>(
-        `UPDATE aprendices a SET full_name = $1, document = $2, is_active = COALESCE($3, a.is_active), deactivation_reason = $4, updated_at = NOW()
-         FROM instructor_fichas i
-         WHERE a.id = $5 AND i.ficha_id = a.ficha_id AND i.instructor_id = $6
-         RETURNING a.id, a.full_name, a.document, a.is_active, a.deactivation_reason`,
-        [String(full_name).trim(), String(document).trim(), typeof is_active === 'boolean' ? is_active : null, deactivationReason, id, user.id]
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: parseResult.error.issues[0]?.message || 'Datos de actualización inválidos.' },
+        { status: 400 }
       );
     }
 
-    if (!updated) return NextResponse.json({ error: 'Aprendiz no encontrado o sin permiso.' }, { status: 404 });
+    const { id, ...data } = parseResult.data;
+    const updated = await aprendizService.updateAprendiz(id, data);
 
-    await query(
-      `INSERT INTO audit_events (actor_role, actor_id, actor_identifier, event_type, target_entity, target_id, metadata_json)
-       VALUES ($1, $2, $3, 'ROSTER_MEMBER_UPDATED', 'aprendices', $4, $5)`,
-      [user.role, user.id, user.document, id, JSON.stringify({ is_active, reason })]
-    );
+    await auditRepository.log({
+      actor_role: user.role,
+      actor_id: user.id,
+      actor_identifier: user.document,
+      event_type: 'APRENDIZ_UPDATED',
+      target_entity: 'aprendices',
+      target_id: id,
+      metadata: data
+    });
 
-    return NextResponse.json({ success: true, aprendiz: updated });
+    return NextResponse.json({ success: true, aprendiz: updated, message: 'Aprendiz actualizado exitosamente.' });
   } catch (error: any) {
-    return NextResponse.json({ error: 'No fue posible actualizar el aprendiz.' }, { status: 500 });
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error('Error in roster PUT:', error);
+    return NextResponse.json({ error: 'Error al actualizar aprendiz.' }, { status: 500 });
   }
 }
 
@@ -178,41 +132,40 @@ export async function DELETE(request: Request) {
   if (!user || (user.role !== 'instructor' && user.role !== 'coordinador')) {
     return NextResponse.json({ error: 'Acceso no autorizado.' }, { status: 403 });
   }
+
   try {
-    const { id, reason } = await request.json();
-    if (!id) {
-      return NextResponse.json({ error: 'Identificador de aprendiz requerido.' }, { status: 400 });
-    }
+    const body = await request.json();
+    const parseResult = AprendizDeactivateSchema.safeParse(body);
 
-    const removalReason = reason ? String(reason).trim() : 'Retirado por ' + user.role;
-
-    // Desactivar / retirar aprendiz registrando motivo
-    let deleted: any = null;
-    if (user.role === 'coordinador') {
-      deleted = await queryOne<any>(
-        `UPDATE aprendices SET is_active = false, deactivation_reason = $1, updated_at = NOW() WHERE id = $2 RETURNING id, full_name, document`,
-        [removalReason, id]
-      );
-    } else {
-      deleted = await queryOne<any>(
-        `UPDATE aprendices a SET is_active = false, deactivation_reason = $1, updated_at = NOW()
-         FROM instructor_fichas i
-         WHERE a.id = $2 AND i.ficha_id = a.ficha_id AND i.instructor_id = $3
-         RETURNING a.id, a.full_name, a.document`,
-        [removalReason, id, user.id]
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: parseResult.error.issues[0]?.message || 'Motivo de retiro inválido.' },
+        { status: 400 }
       );
     }
 
-    if (!deleted) return NextResponse.json({ error: 'Aprendiz no encontrado o sin permisos.' }, { status: 404 });
+    const deactivated = await aprendizService.deactivateAprendiz(parseResult.data);
 
-    await query(
-      `INSERT INTO audit_events (actor_role, actor_id, actor_identifier, event_type, target_entity, target_id, metadata_json)
-       VALUES ($1, $2, $3, 'ROSTER_MEMBER_DEACTIVATED', 'aprendices', $4, $5)`,
-      [user.role, user.id, user.document, id, JSON.stringify({ reason: removalReason })]
-    );
+    await auditRepository.log({
+      actor_role: user.role,
+      actor_id: user.id,
+      actor_identifier: user.document,
+      event_type: 'APRENDIZ_DEACTIVATED',
+      target_entity: 'aprendices',
+      target_id: deactivated.id,
+      metadata: { reason: deactivated.deactivation_reason }
+    });
 
-    return NextResponse.json({ success: true, message: 'Aprendiz retirado del listado con motivo registrado.', deleted });
+    return NextResponse.json({
+      success: true,
+      aprendiz: deactivated,
+      message: `Aprendiz "${deactivated.full_name}" retirado con motivo institucional registrado.`
+    });
   } catch (error: any) {
-    return NextResponse.json({ error: 'Error al retirar aprendiz del listado.' }, { status: 500 });
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error('Error in roster DELETE:', error);
+    return NextResponse.json({ error: 'Error al retirar aprendiz.' }, { status: 500 });
   }
 }

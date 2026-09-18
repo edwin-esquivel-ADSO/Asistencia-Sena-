@@ -137,23 +137,6 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label className="form-label" htmlFor="fullName">Nombre Completo *</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  id="fullName"
-                  type="text"
-                  className="form-input"
-                  placeholder="Ej. Carlos Mario Restrepo"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                  style={{ paddingLeft: '2.75rem' }}
-                />
-                <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-              </div>
-            </div>
-
-            <div className="form-group">
               <label className="form-label" htmlFor="document">Número de Documento *</label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -168,6 +151,29 @@ export default function LoginPage() {
                 />
                 <UserCheck size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
               </div>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
+                Identificador institucional principal.
+              </p>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="fullName">Nombre Completo *</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="fullName"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ej. Carlos Mario Restrepo"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                  style={{ paddingLeft: '2.75rem' }}
+                />
+                <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem' }}>
+                Coincidencia flexible (insensible a mayúsculas, minúsculas y tildes).
+              </p>
             </div>
 
             <div style={{

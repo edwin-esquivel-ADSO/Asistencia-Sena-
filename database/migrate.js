@@ -37,7 +37,7 @@ async function migrate() {
         await client.connect();
 
         const sql = `
-            -- 1. Users Table (Acceso sin contraseña)
+            -- 1. Users Table
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 document VARCHAR(50) UNIQUE NOT NULL,
@@ -51,7 +51,6 @@ async function migrate() {
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Ensure password_hash is optional/nullable
             ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(50);
             ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(150);
@@ -66,7 +65,7 @@ async function migrate() {
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 3. Ambientes Table (Soporte Geocerca: Latitud, Longitud, Radio Máximo en Metros)
+            -- 3. Ambientes Table
             CREATE TABLE IF NOT EXISTS ambientes (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(100) UNIQUE NOT NULL,
@@ -87,7 +86,7 @@ async function migrate() {
                 PRIMARY KEY (instructor_id, ficha_id)
             );
 
-            -- 5. QR Sessions Table (Vigencia 5min TIMESTAMPTZ y zona horaria Colombia)
+            -- 5. QR Sessions Table
             CREATE TABLE IF NOT EXISTS qr_sessions (
                 id SERIAL PRIMARY KEY,
                 token VARCHAR(100) UNIQUE NOT NULL,
@@ -119,11 +118,9 @@ async function migrate() {
             ALTER TABLE qr_sessions ADD COLUMN IF NOT EXISTS session_type VARCHAR(20) DEFAULT 'regular';
             ALTER TABLE qr_sessions ADD COLUMN IF NOT EXISTS parent_session_id INT REFERENCES qr_sessions(id) ON DELETE CASCADE;
 
-            -- Migración TIMESTAMPTZ para created_at y expires_at en qr_sessions
             ALTER TABLE qr_sessions ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
             ALTER TABLE qr_sessions ALTER COLUMN expires_at TYPE TIMESTAMPTZ USING expires_at AT TIME ZONE 'UTC';
 
-            -- Migración Jornadas: reemplazar Madrugada por Tarde
             UPDATE qr_sessions SET jornada = 'Tarde' WHERE jornada = 'Madrugada';
             ALTER TABLE qr_sessions DROP CONSTRAINT IF EXISTS qr_sessions_jornada_check;
             ALTER TABLE qr_sessions ADD CONSTRAINT qr_sessions_jornada_check CHECK (jornada IN ('Diurna', 'Tarde', 'Nocturna', 'Mixta'));
@@ -165,11 +162,9 @@ async function migrate() {
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS excuse_path VARCHAR(255);
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS excuse_note TEXT;
 
-            -- Migración TIMESTAMPTZ para created_at y updated_at en attendances
             ALTER TABLE attendances ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
             ALTER TABLE attendances ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC';
 
-            -- Reemplazar Madrugada en registros de asistencia históricos
             UPDATE attendances SET jornada = 'Tarde' WHERE jornada = 'Madrugada';
 
             -- 7. Aprendices Table
@@ -203,7 +198,7 @@ async function migrate() {
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- 9. Excuse Requests Table
+            -- 9. Excuse Requests Table (Unificado el contador de versión version INT DEFAULT 1)
             CREATE TABLE IF NOT EXISTS excuse_requests (
                 id SERIAL PRIMARY KEY,
                 aprendiz_id INT REFERENCES aprendices(id) ON DELETE CASCADE,
@@ -213,12 +208,15 @@ async function migrate() {
                 reason TEXT NOT NULL,
                 file_path VARCHAR(255) NOT NULL,
                 status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+                version INT NOT NULL DEFAULT 1,
                 decided_by_instructor_id INT REFERENCES users(id) ON DELETE SET NULL,
                 instructor_comment TEXT DEFAULT NULL,
                 decided_at TIMESTAMPTZ DEFAULT NULL,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
+
+            ALTER TABLE excuse_requests ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
 
             -- 10. Notifications Table
             CREATE TABLE IF NOT EXISTS notifications (
@@ -243,8 +241,6 @@ async function migrate() {
                 preferences_json JSONB DEFAULT '{"notify_excuses": true, "notify_absences": true}'::jsonb,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-       
-AMP
             );
 
             -- 12. Audit Events Table
@@ -264,16 +260,13 @@ AMP
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Campos aditivos a aprendices
             ALTER TABLE aprendices ADD COLUMN IF NOT EXISTS deactivation_reason TEXT DEFAULT NULL;
-
-            -- Campos aditivos a attendances
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS tarea_registrada BOOLEAN DEFAULT FALSE;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS tarea_nota TEXT DEFAULT NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS aprendiz_id INT REFERENCES aprendices(id) ON DELETE SET NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS face_verification_id INT REFERENCES face_verifications(id) ON DELETE SET NULL;
             ALTER TABLE attendances ADD COLUMN IF NOT EXISTS arrival_time VARCHAR(20) DEFAULT NULL;
-            -- Indexes para tablas aditivas
+
             CREATE INDEX IF NOT EXISTS idx_users_document ON users(document);
             CREATE INDEX IF NOT EXISTS idx_users_name ON users(full_name);
             CREATE INDEX IF NOT EXISTS idx_qr_sessions_token ON qr_sessions(token);
@@ -292,7 +285,6 @@ AMP
         await client.query(sql);
         console.log('Migración de base de datos ejecutada exitosamente.');
 
-        // Seed initial coordinator and default instructor if not exist
         await client.query(`
             INSERT INTO users (document, full_name, role, is_active)
             VALUES ('900800700', 'Diana Carolina Rojas', 'coordinador', true)
@@ -309,7 +301,6 @@ AMP
                 is_active = true;
         `);
 
-        // Seed initial Fichas and Ambientes if empty
         await client.query(`
             INSERT INTO fichas (code, program_name) VALUES
             ('2711425', 'Análisis y Desarrollo de Software (ADSO)'),

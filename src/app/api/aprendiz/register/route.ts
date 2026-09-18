@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
 import { validateRotativeToken, calculateDistanceMeters } from '@/lib/qr-security';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 function parseUserAgent(ua: string | null) {
   if (!ua) return { navegador: 'Desconocido', dispositivo: 'Móvil/Computador' };
@@ -46,6 +47,18 @@ export async function POST(request: Request) {
 
     const cleanDocument = String(document).trim();
     const cleanName = String(full_name).trim();
+
+    // Aplicar Rate Limiting por IP y Documento
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
+      || request.headers.get('x-real-ip')
+      || 'unknown';
+    const rateLimitResult = checkRateLimit(`register_${clientIp}_${cleanDocument}`, 10, 60000);
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        { error: 'Ha superado el límite de intentos permitidos. Espere un momento e intente de nuevo.' },
+        { status: 429 }
+      );
+    }
 
     // 1. Verify session in PostgreSQL
     const session = await queryOne(
@@ -135,10 +148,6 @@ export async function POST(request: Request) {
     }
 
     // Get IP address from headers
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    const realIp = request.headers.get('x-real-ip');
-    const clientIp = forwardedFor ? forwardedFor.split(',')[0].trim() : realIp || 'Desconocida';
-
     const userAgent = request.headers.get('user-agent');
     const { navegador, dispositivo } = parseUserAgent(userAgent);
 

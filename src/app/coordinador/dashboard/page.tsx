@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import {
   UserCheck, ShieldCheck, UserPlus, LogOut, CheckCircle, XCircle, Search,
-  Edit3, BarChart3, FileSpreadsheet, MapPin, Paperclip, Globe, Monitor, Users
+  Edit3, BarChart3, FileSpreadsheet, MapPin, Paperclip, Globe, Monitor, Users, Check, X, Clock
 } from 'lucide-react';
-import { formatDateBogota, formatTimeBogota, formatDateFilenameBogota } from '@/lib/date-utils';
+import { formatDateBogota, formatTimeBogota, formatDateFilenameBogota, formatExcusePeriod } from '@/lib/date-utils';
+import { Navbar } from '@/components/Navbar';
 
 interface User {
   id: number;
@@ -25,9 +26,11 @@ export default function CoordinatorDashboard() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [instructors, setInstructors] = useState<User[]>([]);
   const [attendances, setAttendances] = useState<any[]>([]);
+  const [excuses, setExcuses] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({});
-  const [activeTab, setActiveTab] = useState<'instructores' | 'historial'>('instructores');
+  const [activeTab, setActiveTab] = useState<'instructores' | 'historial' | 'excusas'>('instructores');
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   // Modal State
@@ -58,7 +61,7 @@ export default function CoordinatorDashboard() {
       }
       setCurrentUser(meData.user);
 
-      await Promise.all([loadInstructors(), loadHistory()]);
+      await Promise.all([loadInstructors(), loadHistory(), loadCoordinatorExcuses()]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -83,6 +86,57 @@ export default function CoordinatorDashboard() {
     }
   };
 
+  const loadCoordinatorExcuses = async () => {
+    try {
+      const res = await fetch('/api/coordinador/excusas');
+      if (res.ok) {
+        const data = await res.json();
+        setExcuses(data.excuses || []);
+      }
+    } catch (err) {
+      console.error('Error al cargar excusas multidía:', err);
+    }
+  };
+
+  const handleReviewExcuse = async (excuse: any, action: 'approved' | 'rejected') => {
+    const comment = prompt(
+      action === 'approved'
+        ? 'Comentario opcional de aprobación:'
+        : 'Motivo de rechazo de la excusa multidía (obligatorio):'
+    );
+    if (action === 'rejected' && (!comment || !comment.trim())) {
+      alert('El motivo de rechazo es obligatorio.');
+      return;
+    }
+
+    setActionLoading(excuse.id);
+    try {
+      const res = await fetch(`/api/coordinador/excusas/${excuse.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          instructor_comment: comment,
+          version: excuse.version || 1
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message || 'Excusa multidía procesada correctamente.');
+        await loadCoordinatorExcuses();
+      } else if (res.status === 409) {
+        alert('Conflicto de concurrencia: Esta excusa ya ha sido procesada o modificada por otro usuario. La lista se actualizará.');
+        await loadCoordinatorExcuses();
+      } else {
+        alert(data.error || 'Error al procesar la excusa multidía.');
+      }
+    } catch (err) {
+      alert('Error de red al procesar la excusa.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/login');
@@ -91,7 +145,9 @@ export default function CoordinatorDashboard() {
   const exportToExcel = () => {
     const dataToExport = filteredAttendances.map(att => {
       const host = typeof window !== 'undefined' ? window.location.host : '';
-      const fullExcuseUrl = att.excuse_path ? `${window.location.protocol}//${host}${att.excuse_path}` : 'Sin soporte';
+      const fullExcuseUrl = att.excuse_path
+        ? `${window.location.protocol}//${host}/api/excusas/signed-url?path=${encodeURIComponent(att.excuse_path)}`
+        : 'Sin soporte';
       const hasGps = att.latitud && att.latitud !== 'Ubicación no disponible';
       const mapsUrl = hasGps ? `https://maps.google.com/?q=${att.latitud},${att.longitud}` : 'Sin GPS';
 
@@ -227,30 +283,17 @@ export default function CoordinatorDashboard() {
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       {/* Header */}
-      <header className="header-bar">
-        <div className="brand-title">
-          <ShieldCheck size={28} style={{ color: '#39a900' }} />
-          <span>Panel de Coordinación SENA</span>
-          <span className="brand-badge">Coordinador</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
-            Hola, <strong>{currentUser?.full_name}</strong>
-          </span>
-          <button onClick={() => router.push('/instructor/aprendices')} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
-            <Users size={16} /> Gestionar Fichas y Aprendices
-          </button>
-          <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}>
-            <LogOut size={16} /> Salir
-          </button>
-        </div>
-      </header>
+      <Navbar
+        role="coordinador"
+        userName={currentUser?.full_name}
+        onLogout={handleLogout}
+      />
 
       {/* Main Content Container */}
       <main className="container">
         {/* Navigation Tabs & Actions */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', gap: '0.5rem', background: '#e2e8f0', padding: '0.35rem', borderRadius: '12px' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', background: '#e2e8f0', padding: '0.35rem', borderRadius: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={() => setActiveTab('instructores')}
               style={{
@@ -285,13 +328,31 @@ export default function CoordinatorDashboard() {
               <FileSpreadsheet size={18} style={{ display: 'inline', marginRight: '0.4rem', verticalAlign: 'text-bottom' }} />
               Auditoría de Asistencias ({attendances.length})
             </button>
+            <button
+              onClick={() => setActiveTab('excusas')}
+              style={{
+                padding: '0.6rem 1.25rem',
+                borderRadius: '8px',
+                border: 'none',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                background: activeTab === 'excusas' ? '#ffffff' : 'transparent',
+                color: activeTab === 'excusas' ? '#0f172a' : '#64748b',
+                boxShadow: activeTab === 'excusas' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none'
+              }}
+            >
+              <Paperclip size={18} style={{ display: 'inline', marginRight: '0.4rem', verticalAlign: 'text-bottom' }} />
+              Excusas Multidía ({excuses.length})
+            </button>
           </div>
 
-          {activeTab === 'instructores' ? (
+          {activeTab === 'instructores' && (
             <button id="addInstructorBtn" onClick={openCreateModal} className="btn-primary">
               <UserPlus size={18} /> Registrar Instructor (Sin contraseña)
             </button>
-          ) : (
+          )}
+          {activeTab === 'historial' && (
             <button onClick={exportToExcel} className="btn-primary">
               <FileSpreadsheet size={18} /> Exportar Excel Auditoría (.xlsx)
             </button>
@@ -439,8 +500,13 @@ export default function CoordinatorDashboard() {
                       )}
                       <div>IP: {att.ip_publica || 'N/A'} | {att.dispositivo || ''}</div>
                       {att.excuse_path && (
-                        <a href={att.excuse_path} target="_blank" rel="noopener noreferrer" style={{ color: '#39a900', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginTop: '0.1rem' }}>
-                          <Paperclip size={12} /> Ver Excusa
+                        <a
+                          href={`/api/excusas/signed-url?path=${encodeURIComponent(att.excuse_path)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#0284c7', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginTop: '0.1rem' }}
+                        >
+                          <Paperclip size={12} /> Ver Excusa Segura
                         </a>
                       )}
                     </td>
@@ -448,6 +514,97 @@ export default function CoordinatorDashboard() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* TAB 3: Multidía Excuses Review */}
+        {activeTab === 'excusas' && (
+          <div className="glass-card" style={{ padding: '1.5rem', background: '#ffffff', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>
+                  Aprobación de Excusas Multidía
+                </h2>
+                <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
+                  Excusas que abarcan más de un día. La decisión del Coordinador notifica automáticamente a los instructores vinculados.
+                </p>
+              </div>
+              <button onClick={loadCoordinatorExcuses} className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>
+                Actualizar Lista
+              </button>
+            </div>
+
+            {excuses.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#94a3b8' }}>
+                <CheckCircle size={48} style={{ opacity: 0.35, marginBottom: '0.75rem', color: '#166534', margin: '0 auto' }} />
+                <p style={{ fontWeight: 600 }}>No hay solicitudes de excusas multidía pendientes.</p>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Aprendiz</th>
+                      <th>Documento</th>
+                      <th>Ficha</th>
+                      <th>Periodo</th>
+                      <th>Motivo</th>
+                      <th>Soporte</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {excuses.map((exc) => (
+                      <tr key={exc.id}>
+                        <td style={{ fontWeight: 700, color: '#0f172a' }}>{exc.aprendiz_name}</td>
+                        <td style={{ fontSize: '0.85rem' }}>{exc.aprendiz_document}</td>
+                        <td>
+                          <code style={{ background: '#f1f5f9', padding: '0.2rem 0.4rem', borderRadius: '4px' }}>
+                            {exc.ficha_code}
+                          </code>
+                        </td>
+                        <td style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>
+                          {formatExcusePeriod(exc.start_date, exc.end_date)}
+                        </td>
+                        <td style={{ fontSize: '0.85rem', color: '#475569', maxWidth: '280px' }}>
+                          {exc.reason}
+                        </td>
+                        <td>
+                          <a
+                            href={`/api/excusas/signed-url?path=${encodeURIComponent(exc.file_path)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: '#0284c7', fontWeight: 700, fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                          >
+                            <Paperclip size={14} /> Ver Soporte Seguro
+                          </a>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <button
+                              onClick={() => handleReviewExcuse(exc, 'approved')}
+                              disabled={actionLoading === exc.id}
+                              className="btn-primary"
+                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                            >
+                              <Check size={14} /> Aprobar
+                            </button>
+                            <button
+                              onClick={() => handleReviewExcuse(exc, 'rejected')}
+                              disabled={actionLoading === exc.id}
+                              className="btn-danger"
+                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                            >
+                              <X size={14} /> Rechazar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </main>

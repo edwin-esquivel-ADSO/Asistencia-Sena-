@@ -9,7 +9,8 @@ import {
   ShieldCheck, RefreshCw, MapPin, Paperclip, Bell, Mail, Eye, Check, X, Filter, User, FileSpreadsheet
 } from 'lucide-react';
 
-import { formatDateBogota, formatTimeBogota } from '@/lib/date-utils';
+import { formatDateBogota, formatTimeBogota, formatExcusePeriod } from '@/lib/date-utils';
+import { Navbar } from '@/components/Navbar';
 
 export default function InstructorDashboard() {
   const router = useRouter();
@@ -20,6 +21,7 @@ export default function InstructorDashboard() {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Filtros por tarjeta clicable
@@ -128,24 +130,33 @@ export default function InstructorDashboard() {
     }
   };
 
+  const [networkError, setNetworkError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!activeSession) return;
     updateTimer(activeSession.expires_at);
     const timer = setInterval(() => updateTimer(activeSession.expires_at), 1000);
-    const refresh = setInterval(() => {
-      loadSessionAttendances(activeSession.id);
-      fetch('/api/instructor/sessions')
-        .then(r => r.json())
-        .then(d => {
+    const refresh = setInterval(async () => {
+      try {
+        await loadSessionAttendances(activeSession.id);
+        const r = await fetch('/api/instructor/sessions');
+        if (r.ok) {
+          const d = await r.json();
           if (d.activeSession) {
             setActiveSession(d.activeSession);
             generateQrImage(d.activeSession.token, d.activeSession.rotativeToken);
           } else {
             setActiveSession(null);
           }
-        })
-        .catch(console.error);
+        }
+      } catch (err) {
+        console.error('Error en polling de sesión activa:', err);
+        setNetworkError('Conexión inestable con el servidor. Reintentando sincronización...');
+      } finally {
+        setLoading(false);
+      }
     }, 5000);
+
     return () => {
       clearInterval(timer);
       clearInterval(refresh);
@@ -177,10 +188,22 @@ export default function InstructorDashboard() {
   };
 
   const loadSessionAttendances = async (sessionId: number) => {
-    const res = await fetch(`/api/instructor/sessions/${sessionId}/attendances`);
-    if (res.ok) {
-      const data = await res.json();
-      setAttendances(data.attendances || []);
+    setIsRefreshing(true);
+    try {
+      const res = await fetch(`/api/instructor/sessions/${sessionId}/attendances`);
+      if (res.ok) {
+        const data = await res.json();
+        setAttendances(data.attendances || []);
+        setNetworkError(null);
+      } else {
+        setNetworkError('No se pudo actualizar la lista de asistencias en tiempo real.');
+      }
+    } catch (err) {
+      console.error('Error al cargar asistencias de sesión:', err);
+      setNetworkError('Fallo de red al sincronizar asistencias.');
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -351,7 +374,11 @@ export default function InstructorDashboard() {
       });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message);
+        alert(data.message || 'Excusa procesada correctamente.');
+        loadInstructorNotifications();
+        if (activeSession) loadSessionAttendances(activeSession.id);
+      } else if (res.status === 409) {
+        alert('Conflicto de concurrencia: Esta excusa ya ha sido procesada o modificada por otro usuario. La lista se actualizará.');
         loadInstructorNotifications();
         if (activeSession) loadSessionAttendances(activeSession.id);
       } else {
@@ -432,41 +459,21 @@ export default function InstructorDashboard() {
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       {/* Top Navbar */}
-      <header className="header-bar">
-        <div className="brand-title">
-          <QrCode size={28} style={{ color: '#39a900' }} />
-          <span>Gestión de Asistencia SENA</span>
-          <span className="brand-badge">Instructor</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button
-            onClick={() => setShowInboxModal(true)}
-            className="btn-secondary"
-            style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem', position: 'relative' }}
-          >
-            <Bell size={16} /> Bandeja ({pendingExcuses.length})
-            {pendingExcuses.length > 0 && (
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#dc2626', color: '#fff', borderRadius: '50%', padding: '2px 6px', fontSize: '0.7rem' }}>
-                {pendingExcuses.length}
-              </span>
-            )}
-          </button>
-          <span style={{ fontSize: '0.9rem', color: '#cbd5e1' }}>
-            Instructor: <strong>{currentUser?.full_name}</strong>
-          </span>
-          <button onClick={() => router.push('/instructor/aprendices')} className="btn-secondary" style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}>
-            <User size={16} /> Listado por ficha
-          </button>
-          <button onClick={() => router.push('/instructor/history')} className="btn-secondary" style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}>
-            <History size={16} /> Historial & Informes
-          </button>
-          <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}>
-            <LogOut size={16} /> Salir
-          </button>
-        </div>
-      </header>
+      <Navbar
+        role="instructor"
+        userName={currentUser?.full_name}
+        pendingCount={pendingExcuses.length}
+        onOpenInbox={() => setShowInboxModal(true)}
+        onLogout={handleLogout}
+      />
 
       <main className="container">
+        {networkError && (
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', marginBottom: '1rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px' }}>
+            <AlertCircle size={18} />
+            <span>{networkError}</span>
+          </div>
+        )}
         {/* VIEW 1: ACTIVE SESSION RUNNING */}
         {activeSession ? (
           <div>
@@ -591,8 +598,13 @@ export default function InstructorDashboard() {
                     Aprendices ({filteredAttendances.length})
                     {filterStatus && <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '0.5rem' }}>(Filtro: {filterStatus})</span>}
                   </h3>
-                  <button onClick={() => loadSessionAttendances(activeSession.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#39a900' }}>
-                    <RefreshCw size={18} />
+                  <button
+                    onClick={() => loadSessionAttendances(activeSession.id)}
+                    disabled={isRefreshing}
+                    title="Actualizar asistencias en tiempo real"
+                    style={{ background: 'none', border: 'none', cursor: isRefreshing ? 'wait' : 'pointer', color: '#39a900' }}
+                  >
+                    <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
                   </button>
                 </div>
 
@@ -782,12 +794,17 @@ export default function InstructorDashboard() {
                   <div key={exc.id} style={{ background: '#fff', border: '1px solid #cbd5e1', padding: '0.85rem', borderRadius: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '0.9rem' }}>
                       <span>{exc.aprendiz_name} (Ficha {exc.ficha_code})</span>
-                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{exc.start_date} a {exc.end_date}</span>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{formatExcusePeriod(exc.start_date, exc.end_date)}</span>
                     </div>
                     <p style={{ fontSize: '0.825rem', color: '#475569', margin: '0.3rem 0' }}>Motivo: {exc.reason}</p>
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                      <a href={exc.file_path} target="_blank" rel="noopener noreferrer" style={{ color: '#0284c7', fontSize: '0.8rem', fontWeight: 600 }}>
-                        Ver Soporte
+                      <a
+                        href={`/api/excusas/signed-url?path=${encodeURIComponent(exc.file_path)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#0284c7', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                      >
+                        <Paperclip size={14} /> Ver Soporte Seguro
                       </a>
                       <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem' }}>
                         <button onClick={() => handleReviewExcuse(exc.id, 'approved')} className="btn-primary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.775rem' }}>

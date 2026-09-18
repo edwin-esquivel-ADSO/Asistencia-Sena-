@@ -2,6 +2,7 @@
 
 -- Drop tables if they exist
 DROP TABLE IF EXISTS attendances CASCADE;
+DROP TABLE IF EXISTS excuse_requests CASCADE;
 DROP TABLE IF EXISTS qr_sessions CASCADE;
 DROP TABLE IF EXISTS instructor_fichas CASCADE;
 DROP TABLE IF EXISTS ambientes CASCADE;
@@ -89,6 +90,26 @@ CREATE TABLE attendances (
 -- Indexes for attendances queries
 CREATE INDEX idx_attendances_document ON attendances(aprendiz_document);
 CREATE INDEX idx_attendances_ficha ON attendances(ficha_code);
+
+-- 7. Excuse Requests Table
+-- The migration script adds the production foreign keys and preserves existing data.
+CREATE TABLE excuse_requests (
+        id SERIAL PRIMARY KEY,
+        aprendiz_id INT NOT NULL,
+        attendance_id INT DEFAULT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        reason TEXT NOT NULL,
+        file_path VARCHAR(255) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'approved', 'rejected')),
+        version INT NOT NULL DEFAULT 1,
+        decided_by_instructor_id INT DEFAULT NULL,
+        instructor_comment TEXT DEFAULT NULL,
+        decided_at TIMESTAMPTZ DEFAULT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =========================================================================
 -- Insert Sample Seed Data for testing

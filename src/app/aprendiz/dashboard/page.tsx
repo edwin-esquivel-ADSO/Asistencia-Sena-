@@ -4,6 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserCheck, FileText, Bell, CheckCircle2, Clock, XCircle, AlertCircle, LogOut, Upload, ShieldCheck, Sparkles } from 'lucide-react';
 import Link from 'next/link';
+import { excuseSchema } from '@/lib/schemas/excuse-schema';
+import { formatExcusePeriod } from '@/lib/date-utils';
+import { Navbar } from '@/components/Navbar';
 
 export default function AprendizDashboardPage() {
   const router = useRouter();
@@ -12,6 +15,7 @@ export default function AprendizDashboardPage() {
   const [activeTab, setActiveTab] = useState<'historial' | 'excusas' | 'notificaciones'>('historial');
 
   // Formulario excusa
+  const [selectedFichaId, setSelectedFichaId] = useState<string>('');
   const [excuseReason, setExcuseReason] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -32,6 +36,9 @@ export default function AprendizDashboardPage() {
         router.push('/aprendiz/acceso');
       } else {
         setProfileData(data);
+        if (data.aprendiz?.ficha_id) {
+          setSelectedFichaId(String(data.aprendiz.ficha_id));
+        }
       }
     } catch (err) {
       router.push('/aprendiz/acceso');
@@ -50,7 +57,23 @@ export default function AprendizDashboardPage() {
     e.preventDefault();
     setExcuseMsg(null);
 
-    if (!startDate || !endDate || !excuseReason.trim() || !excuseFile) {
+    if (!selectedFichaId) {
+      setExcuseMsg({ type: 'error', text: 'Debe seleccionar la Ficha de Formación a la que pertenece la excusa.' });
+      return;
+    }
+
+    const excuseValidation = excuseSchema.safeParse({
+      start_date: startDate,
+      end_date: endDate,
+      reason: excuseReason.trim(),
+    });
+
+    if (!excuseValidation.success) {
+      setExcuseMsg({ type: 'error', text: excuseValidation.error.issues[0]?.message || 'Las fechas de la excusa no son válidas.' });
+      return;
+    }
+
+    if (!excuseFile) {
       setExcuseMsg({ type: 'error', text: 'Por favor complete todos los campos obligatorios y adjunte el archivo de soporte.' });
       return;
     }
@@ -59,6 +82,7 @@ export default function AprendizDashboardPage() {
 
     try {
       const formData = new FormData();
+      formData.append('ficha_id', selectedFichaId);
       formData.append('start_date', startDate);
       formData.append('end_date', endDate);
       formData.append('reason', excuseReason.trim());
@@ -106,20 +130,11 @@ export default function AprendizDashboardPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
       {/* Top Header Bar */}
-      <header className="header-bar">
-        <div className="brand-title">
-          <UserCheck size={28} style={{ color: '#39a900' }} />
-          <span>Portal Aprendiz SENA</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#334155' }}>
-            {aprendiz?.full_name} <code style={{ background: '#e2e8f0', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.775rem' }}>{aprendiz?.ficha_code}</code>
-          </span>
-          <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
-            <LogOut size={16} /> Salir
-          </button>
-        </div>
-      </header>
+      <Navbar
+        role="aprendiz"
+        userName={aprendiz?.full_name}
+        onLogout={handleLogout}
+      />
 
       <main className="container" style={{ maxWidth: '1100px', padding: '2rem 1rem' }}>
 
@@ -282,6 +297,23 @@ export default function AprendizDashboardPage() {
               )}
 
               <form onSubmit={handleExcuseSubmit}>
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Ficha de Formación *</label>
+                  <select
+                    className="form-select"
+                    value={selectedFichaId}
+                    onChange={(e) => setSelectedFichaId(e.target.value)}
+                    required
+                  >
+                    <option value="">-- Seleccionar Ficha Asociada --</option>
+                    {aprendiz?.ficha_id && (
+                      <option value={aprendiz.ficha_id}>
+                        {aprendiz.ficha_code} - {aprendiz.program_name}
+                      </option>
+                    )}
+                  </select>
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
                   <div>
                     <label className="form-label">Fecha Inicio *</label>
@@ -345,7 +377,7 @@ export default function AprendizDashboardPage() {
                       {excuses.map((exc: any) => (
                         <tr key={exc.id}>
                           <td>{new Date(exc.created_at).toLocaleDateString()}</td>
-                          <td>{exc.start_date} a {exc.end_date}</td>
+                          <td>{formatExcusePeriod(exc.start_date, exc.end_date)}</td>
                           <td>{exc.reason}</td>
                           <td>
                             <span className={`badge-status ${
@@ -357,8 +389,13 @@ export default function AprendizDashboardPage() {
                           </td>
                           <td>{exc.instructor_comment || '-'}</td>
                           <td>
-                            <a href={exc.file_path} target="_blank" rel="noopener noreferrer" style={{ color: '#39a900', fontWeight: 600, fontSize: '0.85rem' }}>
-                              Ver Documento
+                            <a
+                              href={`/api/excusas/signed-url?path=${encodeURIComponent(exc.file_path)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#0284c7', fontWeight: 600, fontSize: '0.85rem' }}
+                            >
+                              Ver Documento Seguro
                             </a>
                           </td>
                         </tr>

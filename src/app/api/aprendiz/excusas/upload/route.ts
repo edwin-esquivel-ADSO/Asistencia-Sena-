@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAprendiz } from '@/lib/aprendiz-auth';
-import { queryOne, query } from '@/lib/db';
-import { sendNotificationEmail } from '@/lib/email';
+import { excuseService } from '@/services/excuse.service';
+import { ExcuseCreateSchema } from '@/domain/excuse.domain';
+import { uploadImageBuffer, isCloudinaryConfigured } from '@/lib/cloudinary';
 import fs from 'fs';
 import path from 'path';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
@@ -13,20 +16,36 @@ export async function POST(request: Request) {
     }
 
     const formData = await request.formData();
-    const attendance_id = formData.get('attendance_id') ? Number(formData.get('attendance_id')) : null;
-    const start_date = formData.get('start_date') as string;
-    const end_date = formData.get('end_date') as string;
+    const fichaIdRaw = formData.get('ficha_id');
+    const attendanceIdRaw = formData.get('attendance_id');
+    const startDate = formData.get('start_date') as string;
+    const endDate = formData.get('end_date') as string;
     const reason = formData.get('reason') as string;
-    const file = formData.get('file') as File;
+    const file = formData.get('file') as File | null;
 
-    if (!start_date || !end_date || !reason || !file) {
+    if (!file) {
       return NextResponse.json(
-        { error: 'Todos los campos requeridos (fechas, motivo y archivo de soporte) deben ser proporcionados.' },
+        { error: 'El archivo de soporte (médico o justificación) es obligatorio.' },
         { status: 400 }
       );
     }
 
-    // Validar tipo y tamaño de archivo (máx 10MB)
+    const parseResult = ExcuseCreateSchema.safeParse({
+      ficha_id: fichaIdRaw,
+      attendance_id: attendanceIdRaw ? Number(attendanceIdRaw) : null,
+      start_date: startDate,
+      end_date: endDate,
+      reason
+    });
+
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: parseResult.error.issues[0]?.message || 'Datos de excusa inválidos.' },
+        { status: 400 }
+      );
+    }
+
+    // Validate mime type & size
     const allowedMimeTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
     if (!allowedMimeTypes.includes(file.type)) {
       return NextResponse.json(
@@ -39,76 +58,54 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'El archivo supera el tamaño máximo permitido de 10MB.' }, { status: 400 });
     }
 
-    // Guardar archivo localmente / persitente
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'excusas');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
+    let filePath: string;
 
-    const filename = `excusa_${session.id}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-    const filePath = path.join(uploadsDir, filename);
-    const publicPath = `/uploads/excusas/${filename}`;
-
-    fs.writeFileSync(filePath, buffer);
-
-    // Crear solicitud de excusa
-    const excuseRes = await queryOne<any>(
-      `INSERT INTO excuse_requests (
-        aprendiz_id, attendance_id, start_date, end_date, reason, file_path, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-      RETURNING id`,
-      [session.id, attendance_id, start_date, end_date, reason, publicPath]
-    );
-
-    // Obtener instructor asignado a la ficha del aprendiz si existe
-    const instructorRel = await queryOne<any>(
-      `SELECT u.id as instructor_id, u.full_name, ins.alert_email, ins.email_verified
-       FROM instructor_fichas ifi
-       JOIN users u ON ifi.instructor_id = u.id
-       LEFT JOIN instructor_notification_settings ins ON ins.instructor_id = u.id
-       WHERE ifi.ficha_id = $1 LIMIT 1`,
-      [session.ficha_id]
-    );
-
-    if (instructorRel) {
-      // Crear notificación interna para el instructor
-      await query(
-        `INSERT INTO notifications (recipient_role, recipient_id, type, title, body, link_url, metadata_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          'instructor',
-          instructorRel.instructor_id,
-          'excuse_submitted',
-          'Nueva excusa recibida',
-          `El aprendiz ${session.full_name} ha cargado una excusa para la fecha ${start_date}.`,
-          '/instructor/dashboard?tab=excusas',
-          JSON.stringify({ excuse_id: excuseRes.id, aprendiz_id: session.id })
-        ]
-      );
-
-      // Enviar correo si tiene alerta configurada y verificada
-      if (instructorRel.alert_email && instructorRel.email_verified) {
-        await sendNotificationEmail({
-          to: instructorRel.alert_email,
-          subject: `[Asistencia SENA] Nueva Excusa - ${session.full_name}`,
-          html: `<p>Estimado(a) Instructor(a) ${instructorRel.full_name},</p>
-                 <p>El aprendiz <strong>${session.full_name}</strong> ha presentado una excusa médica/justificación para el periodo ${start_date} al ${end_date}.</p>
-                 <p>Por favor ingrese al sistema para revisar el soporte y decidir sobre la solicitud.</p>`
-        });
+    // Check if Cloudinary is configured
+    if (isCloudinaryConfigured() && file.type.startsWith('image/')) {
+      try {
+        const publicId = `sena_excusas/excusa_${session.id}_${Date.now()}`;
+        const uploadRes = await uploadImageBuffer(buffer, publicId);
+        filePath = uploadRes.public_id || publicId;
+      } catch (err) {
+        console.warn('Cloudinary upload fallback to local storage:', err);
+        const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'excusas');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+        const ext = file.type === 'application/pdf' ? 'pdf' : 'png';
+        const filename = `excusa_${session.id}_${Date.now()}.${ext}`;
+        fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+        filePath = `/uploads/excusas/${filename}`;
       }
+    } else {
+      // Local persistent storage
+      const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'excusas');
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+      const ext = file.type === 'application/pdf' ? 'pdf' : 'png';
+      const filename = `excusa_${session.id}_${Date.now()}.${ext}`;
+      fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+      filePath = `/uploads/excusas/${filename}`;
     }
+
+    const excuse = await excuseService.submitExcuse(session, parseResult.data, filePath);
+
+    const isMultiDay = parseResult.data.start_date < parseResult.data.end_date;
+    const message = isMultiDay
+      ? 'Excusa multidía radicada exitosamente y remitida a Coordinación Académica para aprobación global.'
+      : 'Excusa unidía radicada exitosamente y enviada al instructor responsable de la sesión.';
 
     return NextResponse.json({
       success: true,
-      message: 'Excusa radicada exitosamente y enviada a revisión del instructor.',
-      excuse_id: excuseRes.id
+      message,
+      excuse_id: excuse.id,
+      tipo: isMultiDay ? 'multidía' : 'unidía'
     });
-
   } catch (error: any) {
-    console.error('Error al subir excusa de aprendiz:', error);
-    return NextResponse.json({ error: 'Error interno al procesar la excusa.' }, { status: 500 });
+    console.error('Error in excuse upload controller:', error);
+    return NextResponse.json(
+      { error: error.message || 'Error interno al radicar la excusa.' },
+      { status: 500 }
+    );
   }
 }

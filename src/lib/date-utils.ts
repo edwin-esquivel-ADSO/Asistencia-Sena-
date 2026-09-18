@@ -20,6 +20,67 @@ export function formatDateBogota(dateInput: string | Date | null | undefined): s
 }
 
 /**
+ * Formats date compactly as "12 ago. 2026" in America/Bogota timezone
+ */
+export function formatCompactDateBogota(dateInput: string | Date | null | undefined): string {
+  if (!dateInput) return '';
+  // Append T12:00:00 if it is a pure YYYY-MM-DD date to avoid timezone shift on UTC parse
+  let date: Date;
+  if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    date = new Date(`${dateInput}T12:00:00-05:00`);
+  } else {
+    date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  }
+  if (isNaN(date.getTime())) return String(dateInput);
+
+  return new Intl.DateTimeFormat('es-CO', {
+    timeZone: 'America/Bogota',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  }).format(date);
+}
+
+/**
+ * Humanizes excuse date ranges cleanly in America/Bogota:
+ * Single day: "12 ago. 2026"
+ * Same month range: "12 – 15 ago. 2026"
+ * Different month/year: "28 ago. – 02 sep. 2026"
+ */
+export function formatExcusePeriod(
+  startDateInput: string | Date | null | undefined,
+  endDateInput: string | Date | null | undefined
+): string {
+  if (!startDateInput) return '';
+  if (!endDateInput || startDateInput === endDateInput) {
+    return formatCompactDateBogota(startDateInput);
+  }
+
+  const startStr = typeof startDateInput === 'string' ? startDateInput.slice(0, 10) : '';
+  const endStr = typeof endDateInput === 'string' ? endDateInput.slice(0, 10) : '';
+
+  if (startStr && endStr && startStr === endStr) {
+    return formatCompactDateBogota(startDateInput);
+  }
+
+  const formattedStart = formatCompactDateBogota(startDateInput);
+  const formattedEnd = formatCompactDateBogota(endDateInput);
+
+  // Check if same month and year
+  const startParts = formattedStart.split(' ');
+  const endParts = formattedEnd.split(' ');
+
+  if (startParts.length === 3 && endParts.length === 3) {
+    if (startParts[1] === endParts[1] && startParts[2] === endParts[2]) {
+      // Same month and year: "12 – 15 ago. 2026"
+      return `${startParts[0]} – ${endParts[0]} ${endParts[1]} ${endParts[2]}`;
+    }
+  }
+
+  return `${formattedStart} – ${formattedEnd}`;
+}
+
+/**
  * Formats time in the 12-hour Colombian convention (for example, 1:01 p. m.).
  * Handles TIME string "HH:MM:SS" or ISO Date string converting correctly to America/Bogota.
  */

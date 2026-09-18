@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 let pool: Pool | null = null;
 
@@ -32,4 +32,20 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
 export async function queryOne<T = any>(text: string, params?: any[]): Promise<T | null> {
   const rows = await query<T>(text, params);
   return rows.length > 0 ? rows[0] : null;
+}
+
+export async function transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const pool = getDbPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }

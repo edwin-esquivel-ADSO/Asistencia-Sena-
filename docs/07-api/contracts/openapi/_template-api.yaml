@@ -1,0 +1,281 @@
+openapi: 3.0.3
+info:
+  title: Sistema de Gestión de Asistencia SENA - API Contracts
+  description: |
+    Contratos formales de la API REST del Sistema de Asistencia SENA.
+    Incluye flujos de Autenticación, Gestión de Sesiones QR Dinámicas,
+    Marcación de Asistencia con Biometría Facial y Flujo Transaccional de Excusas (Unidía / Multidía).
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000/api
+    description: Servidor de Desarrollo Local
+  - url: https://asistencia-sena-mvp.vercel.app/api
+    description: Servidor de Producción (Vercel)
+
+paths:
+  /auth/login:
+    post:
+      summary: Autenticación Document-First para Instructores y Coordinadores
+      operationId: loginUser
+      tags: [Autenticación]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document, full_name, accept_terms]
+              properties:
+                document:
+                  type: string
+                  example: "1000200300"
+                  description: Número de documento sin letras ni caracteres especiales
+                full_name:
+                  type: string
+                  example: "Carlos Mario Restrepo"
+                  description: Coincidencia flexible insensible a acentos/mayúsculas
+                accept_terms:
+                  type: boolean
+                  example: true
+      responses:
+        '200':
+          description: Autenticación exitosa. Retorna JWT en cookie HTTP-Only y payload.
+        '401':
+          description: Credenciales no coinciden con los registros institucionales.
+
+  /instructor/sessions:
+    post:
+      summary: Crear Nueva Sesión de Asistencia con Código QR
+      operationId: createSession
+      tags: [Sesiones QR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ficha_code, jornada, ambiente_name]
+              properties:
+                ficha_code:
+                  type: string
+                  example: "3413974"
+                program_name:
+                  type: string
+                  example: "Análisis y Desarrollo de Software"
+                jornada:
+                  type: string
+                  enum: [Diurna, Tarde, Nocturna, Mixta]
+                ambiente_name:
+                  type: string
+                  example: "Ambiente 204"
+                hours_duration:
+                  type: integer
+                  default: 6
+      responses:
+        '201':
+          description: Sesión creada exitosamente con token base y rotativo de 30 segundos.
+        '400':
+          description: Parámetros inválidos o ficha/ambiente no especificados.
+
+  /instructor/sessions/{id}/late-qr:
+    post:
+      summary: Generar QR Tardío dentro de los 10 minutos de gracia post-expiración
+      operationId: generateLateQr
+      tags: [Sesiones QR]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: QR tardío generado con token temporal de 5 minutos.
+        '400':
+          description: Ventana de gracia de 10 minutos expirada o sesión no encontrada.
+
+  /aprendiz/register:
+    post:
+      summary: Marcación de Asistencia del Aprendiz mediante Escaneo de QR
+      operationId: registerAttendance
+      tags: [Asistencia]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, rotative_token, document, full_name]
+              properties:
+                token:
+                  type: string
+                rotative_token:
+                  type: string
+                  description: Token rotativo HMAC de 30 segundos
+                document:
+                  type: string
+                full_name:
+                  type: string
+                latitud:
+                  type: string
+                longitud:
+                  type: string
+      responses:
+        '200':
+          description: Asistencia registrada exitosamente (Presente o Tarde).
+        '400':
+          description: Token QR rotativo expirado o fuera de ventana.
+        '409':
+          description: Asistencia duplicada en la misma sesión.
+
+  /aprendiz/verify-face:
+    post:
+      summary: Verificación Biométrica Facial 128D (< 200 ms)
+      operationId: verifyBiometricFace
+      tags: [Biometría]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document, candidate_descriptor]
+              properties:
+                document:
+                  type: string
+                candidate_descriptor:
+                  type: array
+                  items:
+                    type: number
+                  minItems: 128
+                  maxItems: 128
+      responses:
+        '200':
+          description: Resultado de comparación euclidiana (match true/false y distancia).
+        '404':
+          description: Aprendiz no enrolado o sin biometría previa.
+
+  /aprendiz/excusas/upload:
+    post:
+      summary: Radicación de Excusa con Selección Obligatoria de Ficha
+      operationId: uploadExcuse
+      tags: [Excusas]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ficha_id, start_date, end_date, reason, file]
+              properties:
+                ficha_id:
+                  type: integer
+                  description: ID de la ficha de formación asociada obligatoria
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
+                reason:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+                  description: Archivo de soporte (PDF, JPG, PNG) max 10MB
+      responses:
+        '200':
+          description: Excusa radicada. Enrutada a Instructor (Unidía) o a Coordinador (Multidía).
+        '400':
+          description: Fechas inconsistentes, ficha no especificada o archivo inválido.
+
+  /instructor/excusas/{id}/review:
+    post:
+      summary: Revisión y Aprobación/Rechazo de Excusa Unidía con Bloqueo Optimista
+      operationId: reviewInstructorExcuse
+      tags: [Excusas]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, version]
+              properties:
+                action:
+                  type: string
+                  enum: [approved, rejected]
+                version:
+                  type: integer
+                  description: Versión esperada para control de concurrencia
+                instructor_comment:
+                  type: string
+      responses:
+        '200':
+          description: Excusa revisada exitosamente y actualizada atómicamente.
+        '409':
+          description: Conflicto de concurrencia. La excusa ya fue modificada por otro usuario.
+
+  /coordinador/excusas/{id}/review:
+    post:
+      summary: Aprobación de Excusa Multidía por Coordinador con Bloqueo Optimista
+      operationId: reviewCoordinatorExcuse
+      tags: [Excusas]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, version]
+              properties:
+                action:
+                  type: string
+                  enum: [approved, rejected]
+                version:
+                  type: integer
+                instructor_comment:
+                  type: string
+      responses:
+        '200':
+          description: Excusa multidía resuelta. Notificaciones en abanico enviadas a instructores.
+        '409':
+          description: Conflicto de concurrencia (HTTP 409 Conflict).
+
+  /excusas/signed-url:
+    get:
+      summary: Generar URL Firmada Temporal para Soporte Privado de Cloudinary (TTL 5 min)
+      operationId: getSignedExcuseUrl
+      tags: [Excusas]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Cloudinary public_id o ruta del archivo
+        - name: redirect
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '302':
+          description: Redirección inmediata a la URL firmada segura de Cloudinary.
+        '200':
+          description: JSON con la URL firmada temporal generada.
+        '400':
+          description: Ruta no especificada o inválida.

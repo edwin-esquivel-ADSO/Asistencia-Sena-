@@ -1,7 +1,18 @@
 import crypto from 'crypto';
 
 /**
- * Generates a rotative token based on session token and 30-second time slot
+ * Safe timing-constant comparison helper to prevent timing attacks
+ */
+export function safeTimingEqual(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Generates a rotative token based on session token and 30-second time slot (128-bit min / 32 hex chars)
  */
 export function generateRotativeToken(sessionToken: string, timeSlotOffset: number = 0): string {
   const timeSlot = Math.floor(Date.now() / 30000) + timeSlotOffset;
@@ -9,7 +20,7 @@ export function generateRotativeToken(sessionToken: string, timeSlotOffset: numb
     .createHmac('sha256', sessionToken)
     .update(`sena_rotative_slot:${timeSlot}`)
     .digest('hex')
-    .substring(0, 16);
+    .substring(0, 32); // 32 hex chars = 128 bits
 }
 
 /**
@@ -22,12 +33,14 @@ export function validateRotativeToken(sessionToken: string, rotativeToken: strin
   const slotOffsets = [0, -1, 1];
   for (const offset of slotOffsets) {
     const expected = generateRotativeToken(sessionToken, offset);
-    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(rotativeToken))) {
+    if (safeTimingEqual(expected, rotativeToken)) {
       return true;
     }
   }
   return false;
 }
+
+export const verifyRotativeToken = validateRotativeToken;
 
 /**
  * Haversine formula to calculate distance in meters between two GPS coordinates

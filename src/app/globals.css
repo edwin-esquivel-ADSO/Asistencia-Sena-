@@ -294,3 +294,25 @@ body {
     grid-template-columns: repeat(3, 1fr);
   }
 }
+
+/* Navbar Responsiveness */
+@media (max-width: 768px) {
+  .navbar-desktop {
+    display: none !important;
+  }
+  .navbar-mobile-toggle {
+    display: inline-flex !important;
+  }
+  .header-bar {
+    padding: 0.75rem 1rem;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}

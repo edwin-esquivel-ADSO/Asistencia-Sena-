@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     }
 
     const aprendiz = await queryOne<any>(
-      `SELECT a.id, a.document, a.full_name, a.face_asset_public_id, a.face_registered_at, a.biometric_consent_at, f.code as ficha_code, f.program_name
+      `SELECT a.id, a.document, a.full_name, a.face_asset_public_id, a.face_registered_at, a.biometric_consent_at, a.ficha_id, f.code as ficha_code, f.program_name
        FROM aprendices a
        JOIN fichas f ON a.ficha_id = f.id
        WHERE a.id = $1 LIMIT 1`,
@@ -56,6 +56,7 @@ export async function GET(request: Request) {
         id: aprendiz.id,
         document: aprendiz.document,
         full_name: aprendiz.full_name,
+        ficha_id: aprendiz.ficha_id,
         ficha_code: aprendiz.ficha_code,
         program_name: aprendiz.program_name,
         face_registered: Boolean(aprendiz.face_asset_public_id),

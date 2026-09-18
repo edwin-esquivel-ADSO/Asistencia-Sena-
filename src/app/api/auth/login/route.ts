@@ -1,67 +1,28 @@
 import { NextResponse } from 'next/server';
-import { queryOne } from '@/lib/db';
-import { signSessionToken, UserSession } from '@/lib/auth';
+import { LoginSchema } from '@/domain/user.domain';
+import { authService, AuthenticationError } from '@/services/auth.service';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { document, full_name, accept_terms } = body;
+    const parseResult = LoginSchema.safeParse(body);
 
-    if (!accept_terms) {
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: 'Debe aceptar los términos de tratamiento de datos personales.' },
+        { error: parseResult.error.issues[0]?.message || 'Datos de inicio de sesión inválidos.' },
         { status: 400 }
       );
     }
 
-    if (!document || !full_name) {
-      return NextResponse.json(
-        { error: 'Por favor ingrese su número de documento y nombre completo.' },
-        { status: 400 }
-      );
-    }
-
-    const cleanDocument = String(document).trim();
-    const cleanInputName = String(full_name).trim().toLowerCase();
-
-    // Query active user by document
-    const user = await queryOne<any>(
-      `SELECT * FROM users WHERE document = $1 AND is_active = true LIMIT 1`,
-      [cleanDocument]
-    );
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'El nombre completo o número de documento no corresponden a un usuario activo en el sistema.' },
-        { status: 401 }
-      );
-    }
-
-    // Flexible name verification (case-insensitive, trimmed)
-    const cleanDbName = String(user.full_name).trim().toLowerCase();
-    if (cleanInputName !== cleanDbName) {
-      return NextResponse.json(
-        { error: 'El nombre completo o número de documento no corresponden a un usuario activo en el sistema.' },
-        { status: 401 }
-      );
-    }
-
-    const userSession: UserSession = {
-      id: user.id,
-      document: user.document,
-      full_name: user.full_name,
-      username: user.username || null,
-      email: user.email || null,
-      role: user.role,
-      is_active: user.is_active,
-    };
-
-    const token = signSessionToken(userSession);
+    const { user, token, redirect } = await authService.authenticateUser(parseResult.data);
 
     const response = NextResponse.json({
       success: true,
-      user: userSession,
-      redirect: user.role === 'coordinador' ? '/coordinador/dashboard' : '/instructor/dashboard',
+      user,
+      redirect,
+      message: 'Inicio de sesión exitoso.'
     });
 
     response.cookies.set({
@@ -76,6 +37,10 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error: any) {
+    if (error instanceof AuthenticationError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
     console.error('Login error:', error);
     return NextResponse.json(
       { error: 'Error interno del servidor al procesar el inicio de sesión.' },

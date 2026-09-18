@@ -6,9 +6,16 @@ import * as XLSX from 'xlsx';
 import {
   History, ArrowLeft, Search, Edit3, MapPin,
   Paperclip, ChevronDown, ChevronRight, Calendar, Clock,
-  Filter, FileSpreadsheet, FileText, Globe, Monitor, QrCode, X
+  Filter, FileSpreadsheet, FileText, Globe, Monitor, QrCode, X, Loader2
 } from 'lucide-react';
-import { formatDateBogota, formatTimeBogota, formatDateFilenameBogota } from '@/lib/date-utils';
+import {
+  formatDateBogota,
+  formatTimeBogota,
+  formatDateFilenameBogota,
+  formatCompactDateBogota,
+  formatExcusePeriod
+} from '@/lib/date-utils';
+import { Navbar } from '@/components/Navbar';
 
 interface SessionItem {
   id: number;
@@ -63,6 +70,7 @@ interface AttendanceItem {
 
 export default function InstructorHistoryPage() {
   const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [attendances, setAttendances] = useState<AttendanceItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,6 +103,14 @@ export default function InstructorHistoryPage() {
 
   const loadHistory = async () => {
     try {
+      const meRes = await fetch('/api/auth/me');
+      const meData = await meRes.json();
+      if (!meData.authenticated || meData.user.role !== 'instructor') {
+        router.push('/login');
+        return;
+      }
+      setCurrentUser(meData.user);
+
       const res = await fetch('/api/instructor/history');
       if (!res.ok) {
         router.push('/login');
@@ -216,9 +232,7 @@ export default function InstructorHistoryPage() {
       const matches =
         att.aprendiz_name.toLowerCase().includes(term) ||
         att.aprendiz_document.includes(term) ||
-        att.ficha_code.includes(term) ||
-        att.ambiente_name.toLowerCase().includes(term) ||
-        att.instructor_name.toLowerCase().includes(term);
+        att.ficha_code.includes(term);
       if (!matches) return false;
     }
 
@@ -268,72 +282,57 @@ export default function InstructorHistoryPage() {
       [''],
       [
         'N°',
-        'Documento ID',
-        'Nombre del Aprendiz',
-        'Estado Asistencia',
-        'Horas Certificadas',
-        'Tipo Registro',
-        'Hora Exacta Registro (Servidor)',
-        'Verificación Facial',
-        'Coordenadas GPS',
-        'Precisión GPS',
-        'IP Pública',
-        'Dispositivo',
-        'Navegador',
-        'Estado Ubicación',
-        'Enlace Mapa Google',
-        'Justificación / Excusa',
-        'Enlace Soporte Excusa'
+        'APRENDIZ',
+        'DOCUMENTO',
+        'ESTADO',
+        'HORAS',
+        'TIPO REGISTRO',
+        'FECHA',
+        'HORA REGISTRO (SERVIDOR)',
+        'IP PÚBLICA',
+        'DISPOSITIVO',
+        'NAVEGADOR',
+        'ESTADO UBICACIÓN',
+        'ENLACE MAPA GOOGLE',
+        'JUSTIFICACIÓN / NOTA',
+        'ENLACE SOPORTE'
       ]
     ];
 
-    const dataRows = sessionAtts.map((att, idx) => {
-      const host = typeof window !== 'undefined' ? window.location.host : '';
-      const fullExcuseUrl = att.excuse_path ? `${window.location.protocol}//${host}${att.excuse_path}` : 'Sin soporte';
+    const host = typeof window !== 'undefined' ? window.location.host : '';
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+
+    const dataRows = sessionAtts.map((att, index) => {
+      const fullExcuseUrl = att.excuse_path
+        ? `${protocol}//${host}/api/excusas/signed-url?path=${encodeURIComponent(att.excuse_path)}&redirect=true`
+        : 'Sin soporte';
       const hasGps = att.latitud && att.latitud !== 'Ubicación no disponible';
       const mapsUrl = hasGps ? `https://maps.google.com/?q=${att.latitud},${att.longitud}` : 'Sin GPS';
 
       return [
-        idx + 1,
-        att.aprendiz_document || '',
-        att.aprendiz_name || '',
-        att.estado || '',
-        att.horas || 0,
-        att.registro_tipo ? att.registro_tipo.replace('_', ' ') : 'Puntual',
-        att.hora ? formatTimeBogota(att.hora) : '',
-        att.estado === 'Presente' ? 'Verificado en Servidor' : 'Manual / No aplica',
-        hasGps ? `${att.latitud}, ${att.longitud}` : att.location_status || 'Sin GPS',
-        att.precision_gps || 'No disponible',
+        index + 1,
+        att.aprendiz_name,
+        att.aprendiz_document,
+        att.estado,
+        att.horas,
+        att.registro_tipo,
+        formatDateBogota(att.fecha),
+        formatTimeBogota(att.hora),
         att.ip_publica || 'Desconocida',
         att.dispositivo || 'Desconocido',
         att.navegador || 'Desconocido',
-        att.location_status || 'No capturada',
+        att.location_status || 'Sin datos GPS',
         mapsUrl,
-        att.excuse_note || '',
+        att.excuse_note || 'Sin observaciones',
         fullExcuseUrl
       ];
     });
 
-    const fullAOA = [...headerRows, ...dataRows];
-    const worksheet = XLSX.utils.aoa_to_sheet(fullAOA);
-
+    const worksheet = XLSX.utils.aoa_to_sheet([...headerRows, ...dataRows]);
     worksheet['!cols'] = [
-      { wch: 5 },  // N°
-      { wch: 16 }, // Documento ID
-      { wch: 32 }, // Nombre del Aprendiz
-      { wch: 18 }, // Estado Asistencia
-      { wch: 18 }, // Horas Certificadas
-      { wch: 16 }, // Tipo Registro
-      { wch: 24 }, // Hora Exacta Registro
-      { wch: 26 }, // Coordenadas GPS
-      { wch: 18 }, // Precisión GPS
-      { wch: 18 }, // IP Pública
-      { wch: 20 }, // Dispositivo
-      { wch: 18 }, // Navegador
-      { wch: 22 }, // Estado Ubicación
-      { wch: 45 }, // Enlace Mapa Google
-      { wch: 30 }, // Justificación / Excusa
-      { wch: 45 }  // Enlace Soporte Excusa
+      { wch: 5 }, { wch: 32 }, { wch: 16 }, { wch: 14 }, { wch: 8 },
+      { wch: 16 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 20 },
+      { wch: 18 }, { wch: 22 }, { wch: 45 }, { wch: 30 }, { wch: 45 }
     ];
 
     const workbook = XLSX.utils.book_new();
@@ -355,29 +354,25 @@ export default function InstructorHistoryPage() {
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc' }}>
-        <p style={{ fontSize: '1.1rem', color: '#64748b', fontWeight: 600 }}>Cargando Historial de Asistencias...</p>
+        <div style={{ textAlign: 'center', color: '#334155' }}>
+          <Loader2 className="animate-spin" size={32} style={{ margin: '0 auto 0.5rem auto', color: '#39a900' }} />
+          <p style={{ fontSize: '1.05rem', fontWeight: 600 }}>Cargando Historial de Asistencias...</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
-      {/* Header Bar */}
-      <header className="header-bar">
-        <div className="brand-title">
-          <History size={28} style={{ color: '#39a900' }} />
-          <span>Historial e Informes por Sesión y Jornada</span>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button onClick={() => router.push('/instructor/dashboard')} className="btn-secondary" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
-            <ArrowLeft size={16} /> Volver al Panel
-          </button>
-        </div>
-      </header>
+      {/* Finding 2: Responsive Navbar with Hamburger Drawer */}
+      <Navbar
+        role="instructor"
+        userName={currentUser?.full_name}
+      />
 
-      <main className="container">
+      <main className="container" style={{ padding: '1.5rem 1rem' }}>
         {/* FILTERS PANEL */}
-        <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+        <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: '#0f172a', fontWeight: 700 }}>
             <Filter size={20} style={{ color: '#39a900' }} />
             <span>Filtros de Búsqueda y Auditoría</span>
@@ -417,174 +412,199 @@ export default function InstructorHistoryPage() {
             </div>
           </div>
 
-          <div className="grid-3">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Ficha de Formación</label>
               <select className="form-select" value={filterFicha} onChange={(e) => setFilterFicha(e.target.value)}>
                 <option value="all">Todas las Fichas</option>
-                {uniqueFichas.map(f => (
-                  <option key={f} value={f}>{f}</option>
+                {uniqueFichas.map((code) => (
+                  <option key={code} value={code}>{code}</option>
                 ))}
               </select>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Ambiente de Formación</label>
+              <label className="form-label">Ambiente</label>
               <select className="form-select" value={filterAmbiente} onChange={(e) => setFilterAmbiente(e.target.value)}>
                 <option value="all">Todos los Ambientes</option>
-                {uniqueAmbientes.map(a => (
-                  <option key={a} value={a}>{a}</option>
+                {uniqueAmbientes.map((amb) => (
+                  <option key={amb} value={amb}>{amb}</option>
                 ))}
               </select>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Buscar Estudiante / Documento</label>
+              <label className="form-label">Buscar Aprendiz o Documento</label>
               <div style={{ position: 'relative' }}>
                 <input
                   type="text"
+                  placeholder="Nombre o cédula..."
                   className="form-input"
-                  placeholder="Ej. Juan Gómez o 1098..."
+                  style={{ paddingLeft: '2.25rem' }}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  style={{ paddingLeft: '2.5rem' }}
                 />
-                <Search size={18} style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
               </div>
             </div>
           </div>
         </div>
 
-        {/* RESULTS SUMMARY BAR */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a' }}>
-            Sesiones y Jornadas ({filteredSessions.length})
-          </h2>
-          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>
-            Total Registros de Aprendices Filtrados: <strong>{filteredAttendances.length}</strong>
-          </span>
-        </div>
+        {/* ACCORDION SESSIONS LIST */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {filteredSessions.length === 0 ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
+              <History size={48} style={{ opacity: 0.3, margin: '0 auto 1rem auto' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 600 }}>No se encontraron sesiones con los filtros seleccionados.</p>
+            </div>
+          ) : (
+            filteredSessions.map((session) => {
+              const sessionAtts = filteredAttendances.filter((a) => a.qr_session_id === session.id);
+              const countPresente = sessionAtts.filter((a) => a.estado === 'Presente').length;
+              const countTarde = sessionAtts.filter((a) => a.estado.includes('Tarde')).length;
+              const countJustificado = sessionAtts.filter((a) => a.estado === 'Justificado').length;
+              const countFalta = sessionAtts.filter((a) => a.estado === 'Falta').length;
 
-        {/* SESSIONS & JORNADAS ACCORDION LIST */}
-        {filteredSessions.length === 0 ? (
-          <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
-            <FileText size={48} style={{ opacity: 0.4, marginBottom: '0.75rem' }} />
-            <p style={{ fontSize: '1.1rem', fontWeight: 600, color: '#64748b' }}>No se encontraron sesiones para los filtros seleccionados.</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            {filteredSessions.map(session => {
-              const sessionAtts = filteredAttendances.filter(a => a.qr_session_id === session.id);
               const isExpanded = expandedSessions[session.id] ?? false;
-
-              const fechaFormatted = formatDateBogota(session.created_at);
+              const fechaFormatted = formatCompactDateBogota(session.created_at);
               const horaStart = formatTimeBogota(session.created_at);
               const horaEnd = formatTimeBogota(session.expires_at);
 
-              const countPresente = sessionAtts.filter(a => a.estado === 'Presente').length;
-              const countTarde = sessionAtts.filter(a => a.estado.includes('Tarde')).length;
-              const countJustificado = sessionAtts.filter(a => a.estado === 'Justificado').length;
-              const countFalta = sessionAtts.filter(a => a.estado === 'Falta').length;
+              // Finding 10: Check if within 10-minute extemporaneous grace period
+              const diffMinutes = Math.floor((Date.now() - new Date(session.expires_at).getTime()) / (1000 * 60));
+              const isGraceExpired = diffMinutes > 10;
 
               return (
-                <div key={session.id} className="glass-card" style={{ padding: 0, overflow: 'hidden', borderLeft: '5px solid #39a900' }}>
-                  {/* SESSION HEADER CARD */}
+                <div key={session.id} className="glass-card" style={{ overflow: 'hidden' }}>
+                  {/* SESSION ACCORDION HEADER */}
                   <div
                     onClick={() => toggleSession(session.id)}
                     style={{
                       padding: '1.25rem 1.5rem',
-                      background: '#ffffff',
-                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      background: isExpanded ? '#f8fafc' : '#ffffff',
+                      transition: 'background 0.2s ease',
                       flexWrap: 'wrap',
-                      gap: '1rem',
-                      userSelect: 'none'
+                      gap: '1rem'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      <button style={{ background: '#f1f5f9', border: 'none', borderRadius: '8px', padding: '0.4rem', color: '#0f172a', display: 'flex', alignItems: 'center' }}>
-                        {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                      </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      {isExpanded ? (
+                        <ChevronDown size={20} style={{ color: '#39a900' }} />
+                      ) : (
+                        <ChevronRight size={20} style={{ color: '#94a3b8' }} />
+                      )}
                       <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#0f172a' }}>
                             Ficha {session.ficha_code}
                           </span>
-                          <span style={{ fontSize: '0.8rem', color: '#64748b', background: '#e2e8f0', padding: '0.15rem 0.5rem', borderRadius: '6px', fontWeight: 700 }}>
-                            Sesión #{session.id}
+                          <span className="brand-badge" style={{ fontSize: '0.7rem', textTransform: 'capitalize' }}>
+                            {session.jornada}
                           </span>
-                          <span className="badge-status badge-presente" style={{ fontSize: '0.775rem' }}>
-                            Jornada {session.jornada}
-                          </span>
-                          {session.grupo && (
-                            <span style={{ fontSize: '0.8rem', background: '#f1f5f9', padding: '0.2rem 0.5rem', borderRadius: '6px', color: '#475569', fontWeight: 600 }}>
-                              {session.grupo}
+                          {session.session_type === 'late_qr' && (
+                            <span style={{ fontSize: '0.7rem', background: '#fef3c7', color: '#92400e', padding: '0.15rem 0.5rem', borderRadius: '6px', fontWeight: 700 }}>
+                              QR Tardío
                             </span>
                           )}
                         </div>
-                        <p style={{ fontSize: '0.875rem', color: '#64748b', marginTop: '0.25rem' }}>
-                          Ambiente: <strong>{session.ambiente_name}</strong> | Instructor: <strong>{session.instructor_name}</strong>
-                        </p>
+                        <div style={{ fontSize: '0.825rem', color: '#64748b', marginTop: '0.2rem' }}>
+                          {session.program_name} | {session.ambiente_name}
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-                      {/* Timestamps in America/Bogota */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                       <div style={{ fontSize: '0.85rem', color: '#475569', textAlign: 'right' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', justifyContent: 'flex-end' }}>
-                          <Calendar size={14} style={{ color: '#39a900' }} /> Fecha: <strong>{fechaFormatted}</strong>
+                          <Calendar size={14} style={{ color: '#39a900' }} /> <strong>{fechaFormatted}</strong>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.1rem', justifyContent: 'flex-end' }}>
-                          <Clock size={14} style={{ color: '#0284c7' }} /> Inicio: {horaStart} | Fin QR: {horaEnd} ({session.hours_duration}h clase)
+                          <Clock size={14} style={{ color: '#0284c7' }} /> {horaStart} - {horaEnd}
                         </div>
                       </div>
 
-                      {/* Metrics Summary Badges */}
-                      <div style={{ display: 'flex', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 700 }}>
-                        <span title="Presentes" style={{ background: '#dcfce7', color: '#15803d', padding: '0.3rem 0.6rem', borderRadius: '8px' }}>
+                      {/* Finding 3: Metrics Summary Badges with stopPropagation */}
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ display: 'flex', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 700 }}
+                      >
+                        <span
+                          onClick={(e) => e.stopPropagation()}
+                          title="Presentes"
+                          style={{ background: '#dcfce7', color: '#15803d', padding: '0.3rem 0.55rem', borderRadius: '8px', cursor: 'default' }}
+                        >
                           P: {countPresente}
                         </span>
-                        <span title="Tardíos" style={{ background: '#fef9c3', color: '#a16207', padding: '0.3rem 0.6rem', borderRadius: '8px' }}>
+                        <span
+                          onClick={(e) => e.stopPropagation()}
+                          title="Tardíos"
+                          style={{ background: '#fef9c3', color: '#a16207', padding: '0.3rem 0.55rem', borderRadius: '8px', cursor: 'default' }}
+                        >
                           T: {countTarde}
                         </span>
-                        <span title="Justificados" style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.3rem 0.6rem', borderRadius: '8px' }}>
+                        <span
+                          onClick={(e) => e.stopPropagation()}
+                          title="Justificados"
+                          style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.3rem 0.55rem', borderRadius: '8px', cursor: 'default' }}
+                        >
                           J: {countJustificado}
                         </span>
-                        <span title="Faltas" style={{ background: '#fee2e2', color: '#b91c1c', padding: '0.3rem 0.6rem', borderRadius: '8px' }}>
+                        <span
+                          onClick={(e) => e.stopPropagation()}
+                          title="Faltas"
+                          style={{ background: '#fee2e2', color: '#b91c1c', padding: '0.3rem 0.55rem', borderRadius: '8px', cursor: 'default' }}
+                        >
                           F: {countFalta}
                         </span>
                       </div>
 
-                      {/* INDIVIDUAL EXCEL EXPORT BUTTON FOR THIS SESSION */}
+                      {/* Export Excel Button */}
                       <button
                         onClick={(e) => exportSessionToExcel(session, sessionAtts, e)}
                         className="btn-secondary"
                         style={{
-                          padding: '0.45rem 0.85rem',
-                          fontSize: '0.825rem',
+                          padding: '0.4rem 0.75rem',
+                          fontSize: '0.8rem',
                           background: '#f0fdf4',
                           color: '#166534',
                           border: '1px solid #bbf7d0',
-                          fontWeight: 700,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.4rem'
+                          fontWeight: 700
                         }}
-                        title="Exportar únicamente los aprendices de esta sesión a Excel"
+                        title="Exportar aprendices de esta sesión a Excel"
                       >
-                        <FileSpreadsheet size={16} style={{ color: '#39a900' }} />
-                        Exportar Excel de esta sesión
+                        <FileSpreadsheet size={15} style={{ color: '#39a900' }} />
+                        Exportar Excel
                       </button>
+
+                      {/* Finding 10: Reopen Late Button with 10-min constraint */}
                       {session.status === 'finished' && session.session_type !== 'late_qr' && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleReopenLate(session.id); }}
-                          disabled={lateQrLoading === session.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isGraceExpired) handleReopenLate(session.id);
+                          }}
+                          disabled={lateQrLoading === session.id || isGraceExpired}
                           className="btn-secondary"
-                          style={{ padding: '0.45rem 0.85rem', fontSize: '0.825rem', background: '#fef9c3', color: '#854d0e', border: '1px solid #fde68a' }}
+                          style={{
+                            padding: '0.4rem 0.75rem',
+                            fontSize: '0.8rem',
+                            background: isGraceExpired ? '#f1f5f9' : '#fef9c3',
+                            color: isGraceExpired ? '#94a3b8' : '#854d0e',
+                            border: isGraceExpired ? '1px solid #e2e8f0' : '1px solid #fde68a',
+                            cursor: isGraceExpired ? 'not-allowed' : 'pointer'
+                          }}
+                          title={isGraceExpired ? 'Límite extemporáneo de 10 minutos superado' : 'Reabrir código QR por 5 minutos'}
                         >
-                          <QrCode size={16} /> {lateQrLoading === session.id ? 'Abriendo...' : 'Reabrir para tardíos'}
+                          <QrCode size={15} />
+                          {lateQrLoading === session.id
+                            ? 'Abriendo...'
+                            : isGraceExpired
+                            ? 'Expirado > 10 min'
+                            : 'Reabrir para tardíos'}
                         </button>
                       )}
                     </div>
@@ -595,24 +615,8 @@ export default function InstructorHistoryPage() {
                     <div style={{ padding: '1.25rem 1.5rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                         <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#334155' }}>
-                          Lista de Aprendices Registrados en la Sesión #{session.id} ({sessionAtts.length})
+                          Lista de Aprendices en Sesión #{session.id} ({sessionAtts.length})
                         </span>
-                        <button
-                          onClick={(e) => exportSessionToExcel(session, sessionAtts, e)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#39a900',
-                            fontWeight: 700,
-                            fontSize: '0.8rem',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.3rem'
-                          }}
-                        >
-                          <FileSpreadsheet size={14} /> Exportar solo esta lista (.xlsx)
-                        </button>
                       </div>
 
                       {sessionAtts.length === 0 ? (
@@ -626,26 +630,23 @@ export default function InstructorHistoryPage() {
                               <tr>
                                 <th>N°</th>
                                 <th>Aprendiz / Documento</th>
-                                <th>Fecha</th>
-                                <th>Hora Registro (Servidor)</th>
+                                <th>Hora Registro</th>
                                 <th>Estado</th>
                                 <th>Horas</th>
-                                <th>Geolocalización GPS & Mapa</th>
-                                <th>Dispositivo & Red (IP)</th>
-                                <th>Excusa / Soporte PNG/PDF</th>
+                                <th>Dispositivo & Red</th>
+                                <th>Excusa / Soporte</th>
                                 <th>Acción</th>
                               </tr>
                             </thead>
                             <tbody>
                               {sessionAtts.map((att, idx) => (
                                 <tr key={att.id}>
-                                  <td style={{ fontWeight: 700, color: '#64748b' }}>{idx + 1}</td>
+                                  <td>{idx + 1}</td>
                                   <td>
-                                    <strong style={{ color: '#0f172a', display: 'block' }}>{att.aprendiz_name}</strong>
-                                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Doc: {att.aprendiz_document}</span>
+                                    <div style={{ fontWeight: 700, color: '#0f172a' }}>{att.aprendiz_name}</div>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Doc: {att.aprendiz_document}</div>
                                   </td>
-                                  <td>{formatDateBogota(att.fecha)}</td>
-                                  <td style={{ fontWeight: 700, color: '#0f172a' }}>{formatTimeBogota(att.hora)}</td>
+                                  <td style={{ fontSize: '0.85rem' }}>{formatTimeBogota(att.hora)}</td>
                                   <td>
                                     <span className={`badge-status ${
                                       att.estado === 'Presente' ? 'badge-presente' :
@@ -655,25 +656,7 @@ export default function InstructorHistoryPage() {
                                       {att.estado}
                                     </span>
                                   </td>
-                                  <td style={{ textAlign: 'center', fontWeight: 600 }}>{att.horas}h</td>
-                                  <td style={{ fontSize: '0.8rem' }}>
-                                    {att.latitud && att.latitud !== 'Ubicación no disponible' ? (
-                                      <div>
-                                        <span style={{ color: '#475569', fontSize: '0.75rem', fontWeight: 600 }}>{att.latitud}, {att.longitud}</span>
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>Precisión: {att.precision_gps || 'GPS'}</div>
-                                        <a
-                                          href={`https://maps.google.com/?q=${att.latitud},${att.longitud}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          style={{ color: '#0284c7', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginTop: '0.15rem' }}
-                                        >
-                                          <MapPin size={12} /> Ver en Maps
-                                        </a>
-                                      </div>
-                                    ) : (
-                                      <span style={{ color: '#94a3b8' }}>{att.location_status || 'Sin GPS'}</span>
-                                    )}
-                                  </td>
+                                  <td style={{ fontWeight: 700 }}>{att.horas}h</td>
                                   <td style={{ fontSize: '0.775rem', color: '#475569' }}>
                                     <div><Globe size={12} style={{ display: 'inline', marginRight: '3px' }} /> IP: {att.ip_publica || 'Desconocida'}</div>
                                     <div><Monitor size={12} style={{ display: 'inline', marginRight: '3px' }} /> {att.dispositivo || ''} ({att.navegador || ''})</div>
@@ -684,9 +667,10 @@ export default function InstructorHistoryPage() {
                                         "{att.excuse_note}"
                                       </p>
                                     )}
+                                    {/* Finding 15: Secure signed URL redirect with 5-min TTL */}
                                     {att.excuse_path ? (
                                       <a
-                                        href={att.excuse_path}
+                                        href={`/api/excusas/signed-url?path=${encodeURIComponent(att.excuse_path)}&redirect=true`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         style={{ color: '#39a900', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.25rem' }}
@@ -712,18 +696,21 @@ export default function InstructorHistoryPage() {
                   )}
                 </div>
               );
-            })}
-          </div>
-        )}
+            })
+          )}
+        </div>
       </main>
 
-      {/* EDIT RECORD MODAL */}
+      {/* EDIT MODAL */}
       {showEditModal && editingRecord && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', marginBottom: '1rem' }}>
-              Editar Asistencia: {editingRecord.aprendiz_name}
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.5rem' }}>
+              Editar Registro de Asistencia
             </h2>
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '1.25rem' }}>
+              Aprendiz: <strong>{editingRecord.aprendiz_name}</strong> ({editingRecord.aprendiz_document})
+            </p>
 
             <form onSubmit={handleSaveEdit}>
               <div className="form-group">

@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
-import { query, queryOne } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
-import crypto from 'crypto';
+import { sessionRepository } from '@/repositories/session.repository';
+import { fichaRepository } from '@/repositories/ficha.repository';
+import { query, queryOne } from '@/lib/db';
 import { generateRotativeToken } from '@/lib/qr-security';
+import crypto from 'crypto';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -11,12 +15,7 @@ export async function GET() {
   }
 
   try {
-    const activeSession = await queryOne(`
-      SELECT *
-      FROM qr_sessions
-      WHERE instructor_id = $1 AND status = 'active' AND expires_at > NOW()
-      ORDER BY created_at DESC LIMIT 1
-    `, [user.id]);
+    const activeSession = await sessionRepository.findActiveByInstructor(user.id);
 
     if (!activeSession) {
       return NextResponse.json({ activeSession: null });
@@ -44,41 +43,34 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    let {
+    const {
       ficha_code,
       program_name,
       jornada,
       ambiente_name,
+      ambiente_id,
       grupo,
       sede,
-      hours_duration,
-      save_master_data
+      hours_duration
     } = body;
 
-    // Validation
-    if (!ficha_code || !jornada || !ambiente_name) {
+    if (!ficha_code || !jornada || (!ambiente_name && !ambiente_id)) {
       return NextResponse.json(
         { error: 'La Ficha, Jornada y Ambiente son campos obligatorios.' },
         { status: 400 }
       );
     }
 
-    if (!['Diurna', 'Tarde', 'Nocturna', 'Mixta'].includes(jornada.trim())) {
-      return NextResponse.json({ error: 'La jornada seleccionada no es válida. Las jornadas admitidas son: Diurna, Tarde, Nocturna y Mixta.' }, { status: 400 });
+    const validJornadas = ['Diurna', 'Tarde', 'Nocturna', 'Mixta'];
+    if (!validJornadas.includes(jornada.trim())) {
+      return NextResponse.json(
+        { error: 'La jornada seleccionada no es válida. Las jornadas admitidas son: Diurna, Tarde, Nocturna y Mixta.' },
+        { status: 400 }
+      );
     }
 
-    // Regla obligatoria: Todo QR regular tiene vigencia de exactamente 5 minutos.
-    // El servidor y la base de datos imponen NOW() + INTERVAL '5 minutes'.
-    const durationMinutes = 5;
-    const hours = parseInt(hours_duration) || 6;
-
-    // Check if instructor already has an active session
-    const existingActive = await queryOne(`
-      SELECT id FROM qr_sessions
-      WHERE instructor_id = $1 AND status = 'active' AND expires_at > NOW()
-      LIMIT 1
-    `, [user.id]);
-
+    // Check existing active session
+    const existingActive = await sessionRepository.findActiveByInstructor(user.id);
     if (existingActive) {
       return NextResponse.json(
         { error: 'Ya tienes una sesión activa en progreso. Finalízala antes de crear una nueva.' },
@@ -86,53 +78,64 @@ export async function POST(request: Request) {
       );
     }
 
-    // Toda ficha creada manualmente queda registrada para usos posteriores.
-    const ficha = await queryOne<any>(
-      `INSERT INTO fichas (code, program_name)
-       VALUES ($1, $2)
-       ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
-       RETURNING id, code, program_name`,
-      [ficha_code.trim(), program_name?.trim() || 'Programa Personalizado']
-    );
-
+    // Upsert ficha
+    const cleanFichaCode = String(ficha_code).trim();
+    let ficha = await fichaRepository.findFichaByCode(cleanFichaCode);
     if (!ficha) {
-      return NextResponse.json({ error: 'No fue posible registrar la ficha.' }, { status: 500 });
+      ficha = await queryOne<any>(
+        `INSERT INTO fichas (code, program_name)
+         VALUES ($1, $2)
+         ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code
+         RETURNING id, code, program_name`,
+        [cleanFichaCode, program_name?.trim() || 'Programa SENA']
+      );
     }
 
-    await query(
-      `INSERT INTO instructor_fichas (instructor_id, ficha_id)
-       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [user.id, ficha.id]
-    );
+    if (ficha) {
+      await query(
+        `INSERT INTO instructor_fichas (instructor_id, ficha_id)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [user.id, ficha.id]
+      );
+    }
 
-    // El ambiente manual también permanece disponible para futuras sesiones.
-    await query(
-      `INSERT INTO ambientes (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-      [ambiente_name.trim()]
-    );
+    // Ambiente
+    let ambName = ambiente_name?.trim() || '';
+    let ambId = ambiente_id ? Number(ambiente_id) : null;
 
+    if (!ambName && ambId) {
+      const amb = await fichaRepository.findAmbienteById(ambId);
+      ambName = amb?.name || 'Ambiente';
+    } else if (ambName && !ambId) {
+      const amb = await queryOne<any>(
+        `INSERT INTO ambientes (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id, name`,
+        [ambName]
+      );
+      ambId = amb?.id || null;
+    }
+
+    const durationMinutes = 5;
+    const hours = parseInt(hours_duration) || 6;
     const token = crypto.randomBytes(16).toString('hex');
-    const session = await queryOne(`
-      INSERT INTO qr_sessions (
-        token, instructor_id, instructor_name, ficha_code, program_name,
-        ficha_id, jornada, ambiente_name, grupo, sede, duration_minutes, hours_duration,
-        session_type, status, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'regular', 'active', NOW() + INTERVAL '5 minutes')
-      RETURNING *
-    `, [
+    const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+
+    const session = await sessionRepository.create({
       token,
-      user.id,
-      user.full_name,
-      ficha_code.trim(),
-      program_name?.trim() || 'Formación SENA',
-      ficha.id,
-      jornada.trim(),
-      ambiente_name.trim(),
-      grupo?.trim() || 'Grupo 1',
-      sede?.trim() || 'Sede Principal',
-      durationMinutes,
-      hours
-    ]);
+      instructor_id: user.id,
+      instructor_name: user.full_name,
+      ficha_code: cleanFichaCode,
+      ficha_id: ficha?.id || null,
+      program_name: ficha?.program_name || program_name || 'Formación SENA',
+      jornada: jornada.trim() as any,
+      ambiente_name: ambName,
+      ambiente_id: ambId,
+      grupo: grupo?.trim() || 'Grupo 1',
+      sede: sede?.trim() || 'Sede Principal',
+      duration_minutes: durationMinutes,
+      hours_duration: hours,
+      session_type: 'regular',
+      expires_at: expiresAt
+    });
 
     const rotativeToken = generateRotativeToken(token);
 
@@ -145,6 +148,6 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('Error creating session:', error);
-    return NextResponse.json({ error: 'Error al crear la sesión de asistencia' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al crear la sesión de asistencia.' }, { status: 500 });
   }
 }
