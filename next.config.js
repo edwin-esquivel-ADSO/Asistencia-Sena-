@@ -15,6 +15,15 @@ const nextConfig = {
     if (isServer) {
       config.externals = [...(config.externals || []), '@vladmandic/face-api'];
     }
+    config.module = {
+      ...config.module,
+      exprContextCritical: false,
+    };
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      { module: /face-api/ },
+      /Critical dependency/,
+    ];
     return config;
   },
 };
