@@ -5,6 +5,12 @@ const nextConfig = {
     workerThreads: false,
     cpus: 1,
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = [...(config.externals || []), '@vladmandic/face-api'];

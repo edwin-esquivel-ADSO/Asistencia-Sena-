@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
+import { normalizeName, cleanDocumentNumber } from '@/lib/string-utils';
 
 export async function POST(request: Request) {
   try {
@@ -13,15 +14,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const cleanDocument = String(document).trim();
-    const cleanInputName = String(full_name).trim().toLowerCase();
+    const cleanDocument = cleanDocumentNumber(document);
+    const normalizedInputName = normalizeName(full_name);
 
     // Consultar perfil de aprendiz
     const aprendiz = await queryOne<any>(
-      `SELECT a.id, a.document, a.full_name, a.ficha_id, a.is_active, a.face_asset_public_id, f.code as ficha_code, f.program_name
+      `SELECT a.id, a.document, a.full_name, a.ficha_id, a.is_active, a.deactivation_reason, a.face_asset_public_id, f.code as ficha_code, f.program_name
        FROM aprendices a
        JOIN fichas f ON a.ficha_id = f.id
-       WHERE a.document = $1 AND a.is_active = true LIMIT 1`,
+       WHERE a.document = $1 LIMIT 1`,
       [cleanDocument]
     );
 
@@ -32,11 +33,18 @@ export async function POST(request: Request) {
       });
     }
 
-    // Validar coincidencia de nombre sin revelar datos privados si no coincide
-    const cleanDbName = String(aprendiz.full_name).trim().toLowerCase();
-    if (cleanDbName !== cleanInputName) {
+    if (aprendiz.is_active === false) {
       return NextResponse.json(
-        { error: 'Los datos ingresados no coinciden con nuestros registros activos.' },
+        { error: `El usuario con documento ${cleanDocument} se encuentra inactivo/retirado. Motivo: ${aprendiz.deactivation_reason || 'Retiro'}.` },
+        { status: 403 }
+      );
+    }
+
+    // Validar coincidencia de nombre usando normalización (sin ignorar tildes/mayúsculas)
+    const normalizedDbName = normalizeName(aprendiz.full_name);
+    if (normalizedDbName !== normalizedInputName) {
+      return NextResponse.json(
+        { error: `Los datos ingresados no coinciden con nuestros registros. Nombre registrado: ${aprendiz.full_name}` },
         { status: 401 }
       );
     }

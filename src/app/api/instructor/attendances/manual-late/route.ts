@@ -68,14 +68,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, attendance, updated_existing: true });
     }
 
-    // Insert manual late attendance record with optional excuse_path
+    // Insert manual late attendance record in Colombia time zone (America/Bogota)
     const attendance = await queryOne(`
       INSERT INTO attendances (
-        qr_session_id, instructor_name, ficha_code, jornada, ambiente_name,
+        qr_session_id, fecha, hora, instructor_name, ficha_code, jornada, ambiente_name,
         grupo, sede, aprendiz_name, aprendiz_document, estado, registro_tipo,
         horas, arrival_time, excuse_note, excuse_path, location_status, ip_publica,
-        navegador, dispositivo
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'tarde_manual', $11, $12, $13, $14, 'Registro Manual Instructor', '127.0.0.1', 'Navegador Web', 'Panel Instructor')
+        navegador, dispositivo, aprendiz_id
+      ) VALUES (
+        $1, (NOW() AT TIME ZONE 'America/Bogota')::date, (NOW() AT TIME ZONE 'America/Bogota')::time, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10, 'tarde_manual',
+        $11, $12, $13, $14, 'Registro Manual Instructor', '127.0.0.1',
+        'Navegador Web', 'Panel Instructor', $15
+      )
       RETURNING *
     `, [
       session.id,
@@ -91,7 +96,8 @@ export async function POST(request: Request) {
       hoursValue,
       arrival_time && String(arrival_time).trim() !== '' ? String(arrival_time).trim() : null,
       excuse_note?.trim() || null,
-      excuse_path?.trim() || null
+      excuse_path?.trim() || null,
+      aprendiz?.id || null
     ]);
 
     return NextResponse.json({ success: true, attendance });
